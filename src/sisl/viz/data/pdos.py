@@ -150,6 +150,7 @@ class PDOSData(OrbitalData):
                 1: sisl.Spin.UNPOLARIZED,
                 2: sisl.Spin.POLARIZED,
                 4: sisl.Spin.NONCOLINEAR,
+                8: sisl.Spin.NAMBU
             }[PDOS.shape[0]]
         data_spin = sisl.Spin(data_spin)
 

@@ -126,6 +126,21 @@ class pdosSileSiesta(SileSiesta):
                 D[:, 0] = tmp
                 return D
 
+        elif nspin == 8:
+            
+            def process(D):
+                tmp = np.empty(D.shape[0], D.dtype)
+                D[:,3] = D[:,0] - D[:,1]
+                D[:,0] = D[:,0] + D[:,1]
+                D[:,1] = D[:,2]
+                D[:,2] = tmp[:]
+                tmp[:] = D[:,7]
+                D[:,7] = D[:,4] - D[:,5]
+                D[:,4] = D[:,4] + D[:,5]
+                D[:,5] = D[:,6]
+                D[:,6] = tmp[:]
+                return D               
+ 
         else:
 
             def process(D):
