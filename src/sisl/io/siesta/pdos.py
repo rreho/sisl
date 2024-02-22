@@ -477,7 +477,7 @@ will store the spin x/y components of all atoms in spin_x_all.dat/spin_y_all.dat
                 help="Which spin-component to store, up/u, down/d, z/spin or sum/+/total",
             )
 
-        elif PDOS.shape[0] == 4:
+        elif PDOS.shape[0] == 4 or PDOS.shape[0] == 8:
             # Add a spin-action
             class Spin(argparse.Action):
                 @collect_action
@@ -677,7 +677,7 @@ Multiple options will create a new column/line in output, the --norm and --E sho
                         )
                     else:
                         ns._data_header.append("DOS[1/eV]")
-
+                print('I am here', ns)
                 from matplotlib import pyplot as plt
 
                 plt.figure()
