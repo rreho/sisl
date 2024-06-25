@@ -11,8 +11,8 @@
 [build-system]
 requires = [
     "setuptools_scm[toml]>=6.2",
-    "scikit-build-core[pyproject]",
-    "Cython>=0.29.28",
+    "scikit-build-core[pyproject]>=0.8",
+    "Cython>=3",
     # see https://github.com/scipy/oldest-supported-numpy/
     # should fix #310
     "oldest-supported-numpy; sys_platform != 'win32'",
@@ -24,7 +24,7 @@ build-backend = "scikit_build_core.build"
 
 # Top most items are probably changed the most
 [project]
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 
 name = "sisl"
 description = "Manipulation and post-processing of DFT output and creating tight-binding models for NEGF transport"
@@ -40,16 +40,19 @@ keywords = [
 
 dependencies = [
     # TODO work-arounds for windows installations
-    "numpy>=1.19.5 ; sys_platform == 'win32' and python_version <= '3.9'",
-    "numpy>=1.21.5 ; sys_platform == 'win32' and python_version >= '3.10'",
-    "numpy>=1.13 ; sys_platform != 'win32'",
-    "scipy>=1.5.0",
-    "pyparsing>=1.5.7",
-    "xarray>=0.10.0",
+    "numpy>=1.20,<2 ; sys_platform == 'win32' and python_version <= '3.9'",
+    "numpy>=1.21.5,<2 ; sys_platform == 'win32' and python_version >= '3.10'",
+    "numpy>=1.20,<2 ; sys_platform != 'win32'",
+    "scipy>=1.5",
+    # I can't get it to work on py311 with older versions
+    "pyparsing>=2.2.1",
+    # xarray fixes get_loc in 0.20
+    "xarray>=0.20",
 ]
 
 authors = [
-    {name = "Nick Papior", email = "nickpapior@gmail.com"}
+    {name = "Nick Papior", email = "nickpapior@gmail.com"},
+    {name = "Pol Febrer"}
 ]
 maintainers = [{name="sisl developers"}]
 
@@ -62,7 +65,6 @@ classifiers = [
     "Programming Language :: C",
     "Programming Language :: Fortran",
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -82,11 +84,12 @@ dynamic = ["version"]
 [tool.setuptools_scm]
 write_to = "src/sisl/_version.py"
 version_file = "src/sisl/_version.py"
-fallback_version = "0.14.4"
+fallback_version = "0.15.0"
 
 
 [tool.scikit-build]
-
+# Consider adding
+# minimum-version to choose the fallback mechanism in scikit-build-core
 wheel.packages = ["src/sisl", "src/sisl_toolbox"]
 
 # required for dynamic metadata
@@ -99,7 +102,7 @@ build-dir = "build/{wheel_tag}"
 
 # cmake and ninja stuff
 cmake.verbose = true
-cmake.minimum-version = "3.20"
+cmake.version = ">=3.20"
 
 # source configuration
 sdist.reproducible = true
@@ -109,8 +112,8 @@ wheel.expand-macos-universal-tags = true
 
 
 [project.scripts]
-sgeom = "sisl.geometry:sgeom"
-sgrid = "sisl.grid:sgrid"
+sgeom = "sisl._core.geometry:sgeom"
+sgrid = "sisl._core.grid:sgrid"
 sdata = "sisl.utils._sisl_cmd:sisl_cmd"
 stoolbox = "sisl_toolbox.cli:stoolbox_cli"
 
@@ -132,68 +135,82 @@ Chat = "https://discord.gg/5XnFXFdkv2"
 
 analysis = [
     "netCDF4",
-    "tqdm"
+    "tqdm>=4.36.0",
 ]
 
 viz = [
+    "nodify",
+    "netCDF4",
     "dill >= 0.3.2",
     "pathos",
-    "netCDF4",
     "scikit-image",
-
     "plotly",
     "matplotlib",
     "ase",
 ]
 
 viz-plotly = [
+    "nodify",
+    "netCDF4",
     "dill >= 0.3.2",
     "pathos",
-    "netCDF4",
     "scikit-image",
-
     "plotly",
 ]
 
 viz-matplotlib = [
+    "nodify",
+    "netCDF4",
     "dill >= 0.3.2",
     "pathos",
-    "netCDF4",
     "scikit-image",
-
     "matplotlib",
 ]
 
 viz-blender = [
+    "nodify",
+    "netCDF4",
     "dill >= 0.3.2",
     "pathos",
-    "netCDF4",
     "scikit-image",
 ]
 
 viz-ase = [
+    "netCDF4",
     "dill >= 0.3.2",
     "pathos",
-    "netCDF4",
     "scikit-image",
-
     "ase",
 ]
 
 test = [
-    "pytest",
+    "pytest>=7",
+    "coverage[toml]",
     "pytest-cov",
     "pytest-env",
     "pytest-faulthandler",
-    "coveralls",
-    "tqdm",
-    "dill >= 0.3.2",
-    "pathos",
-    "netCDF4",
-    "scikit-image",
-    "matplotlib",
-    "plotly",
-    "ase"
+]
+
+docs = [
+    "nbsphinx",
+    "sphinx-rtd-theme",
+    "sphinx-design",
+    "sphinx-gallery",
+    "sphinx-copybutton",
+    "sphinx-togglebutton",
+    "sphinx-inline-tabs",
+    "sphinxcontrib-bibtex",
+    "importlib-metadata",
+    "ipykernel",
+    "ipywidgets",
+    "jupyterlab-widgets",
+    "kaleido",
+    "pytz",
+    # Visualizing nodes
+    "networkx",
+    "pyvis",
+    "pybtex",
+    "pandoc",
 ]
 
 
@@ -205,11 +222,27 @@ markers = [
     "slow: mark a test as slow",
 ]
 
-addopts = "-rXs --durations=20 --cov"
+addopts = "-rXs --durations=20"
 
 [tool.coverage.run]
-source = ["src"]
+source_pkgs = [
+    "sisl",
+    "sisl_toolbox",
+]
+omit = [
+    "*/conftest.py",
+]
 
+[tool.coverage.report]
+include_namespace_packages = true
+exclude_also = [
+    "raise NotImplementedError",
+]
+exclude_lines = [
+  "@overload",
+  'if __name__ == "__main":',
+  "if TYPE_CHECKING:",
+]
 
 [tool.pylint]
 [tool.pylint.master]
@@ -228,7 +261,7 @@ ignore-patterns = [
 extension-pkg-allow-list = [
    "sisl._math_small",
    "sisl._indices",
-   "sisl._lattice",
+   "sisl._core._lattice",
    "sisl.io.siesta._siesta",
    "sisl.physics._bloch",
    "sisl.physics._matrix_k",
@@ -279,11 +312,20 @@ sections = ['FUTURE', 'STDLIB', 'THIRDPARTY', 'FIRSTPARTY', 'LOCALFOLDER']
 known_first_party = ["sisl_toolbox", "sisl"]
 line_length = 88
 overwrite_in_place = true
-extend_skip = ["src/sisl/__init__.py"]
+extend_skip = ["src/sisl/__init__.py", "src/sisl/_version.py"]
+extend_skip_glob = ["files/*", "*/.*"]
+multi_line_output = "VERTICAL_HANGING_INDENT"
 
 [tool.black]
 line-length = 88
 target-version = ["py38", "py39", "py310", "py311", "py312"]
+extend-exclude = """
+(
+ ^/files/*
+ | /\\..*
+ | .*/\\..*
+)
+"""
 
 
 [tool.cibuildwheel]
@@ -295,8 +337,7 @@ skip = [
     "*musllinux*",
 ]
 
-# The netCDF package does not have a wheel for 312 (yet!)
-test-skip = "cp312-* *-macosx_arm64 *-macosx_universal2:arm64 *"
+test-skip = ""
 
 # Instead of running pytest directly, we use a bash script that will set up
 # the appropiate value for the SISL_FILES_TEST variable, a path pointing to
@@ -304,21 +345,12 @@ test-skip = "cp312-* *-macosx_arm64 *-macosx_universal2:arm64 *"
 test-command = "bash {project}/tools/build_tools/test_wheel.sh {project}"
 
 [tool.cibuildwheel.linux]
-archs = [
-    "x86_64",
-#    "aarch64",
-]
 
 [tool.cibuildwheel.windows]
-archs = [
-    "AMD64",
-    "x86",
-]
+
+before-build = "pip install delvewheel"
+repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel}"
 
 test-command = "pytest --pyargs sisl -m 'not slow'"
 
 [tool.cibuildwheel.macos]
-archs = [
-#    "universal2",
-    "x86_64",
-]

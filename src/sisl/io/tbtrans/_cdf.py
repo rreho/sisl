@@ -1,6 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 from functools import lru_cache
 from numbers import Integral
 
@@ -12,7 +14,7 @@ import sisl._array as _a
 from sisl import Atom, Geometry, Lattice
 from sisl._indices import indices
 from sisl._internal import set_module
-from sisl.messages import info, warn
+from sisl.messages import deprecate, info, warn
 from sisl.physics.distribution import fermi_dirac
 from sisl.unit.siesta import unit_convert
 
@@ -56,8 +58,7 @@ class _ncSileTBtrans(SileCDFTBtrans):
 
         # Create list with correct number of orbitals
         lasto = _a.arrayi(np.copy(self.lasto) + 1)
-        nos = np.append([lasto[0]], np.diff(lasto))
-        nos = _a.arrayi(nos)
+        nos = np.diff(lasto, prepend=0)
 
         if "atom" in kwargs:
             # The user "knows" which atoms are present
@@ -88,7 +89,15 @@ class _ncSileTBtrans(SileCDFTBtrans):
         """The associated geometry from this file"""
         return self.read_geometry()
 
-    geom = geometry
+    @property
+    def geom(self):
+        """Same as `geometry`, but deprecated"""
+        deprecate(
+            f"{self.__class__.__name__}.geom is deprecated, please use '.geometry'."
+            "0.14",
+            "0.16",
+        )
+        return self.geometry
 
     @property
     @lru_cache(maxsize=1)
@@ -608,7 +617,7 @@ class _devncSileTBtrans(_ncSileTBtrans):
         """
         # We need ravel(), otherwise taking len of an int will fail
         orbitals = self.geometry._sanitize_orbs(orbitals).ravel()
-        porb = np.in1d(self.pivot(elec), orbitals).nonzero()[0]
+        porb = np.isin(self.pivot(elec), orbitals).nonzero()[0]
         d = len(orbitals) - len(porb)
         if d != 0:
             warn(

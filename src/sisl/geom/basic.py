@@ -1,10 +1,13 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import numpy as np
 
 from sisl import Geometry, Lattice
 from sisl._internal import set_module
+from sisl.typing import AtomsLike
 
 from ._common import geometry2uc, geometry_define_nsc
 
@@ -23,31 +26,31 @@ _t60 = 3**0.5
 
 
 @set_module("sisl.geom")
-def sc(alat: float, atom):
+def sc(alat: float, atoms: AtomsLike) -> Geometry:
     """Simple cubic lattice with 1 atom
 
     Parameters
     ----------
     alat :
         lattice parameter
-    atom : Atom
+    atoms :
         the atom in the SC lattice
     """
     lattice = Lattice(np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], np.float64) * alat)
-    g = Geometry([0, 0, 0], atom, lattice=lattice)
+    g = Geometry([0, 0, 0], atoms, lattice=lattice)
     geometry_define_nsc(g)
     return g
 
 
 @set_module("sisl.geom")
-def bcc(alat: float, atoms, orthogonal: bool = False):
+def bcc(alat: float, atoms: AtomsLike, orthogonal: bool = False) -> Geometry:
     """Body centered cubic lattice with 1 (non-orthogonal) or 2 atoms (orthogonal)
 
     Parameters
     ----------
     alat :
         lattice parameter
-    atoms : Atom
+    atoms :
         the atom(s) in the BCC lattice
     orthogonal :
         whether the lattice is orthogonal (2 atoms)
@@ -68,14 +71,14 @@ def bcc(alat: float, atoms, orthogonal: bool = False):
 
 
 @set_module("sisl.geom")
-def fcc(alat: float, atoms, orthogonal: bool = False):
+def fcc(alat: float, atoms: AtomsLike, orthogonal: bool = False) -> Geometry:
     """Face centered cubic lattice with 1 (non-orthogonal) or 4 atoms (orthogonal)
 
     Parameters
     ----------
     alat :
         lattice parameter
-    atoms : Atom
+    atoms :
         the atom(s) in the FCC lattice
     orthogonal :
         whether the lattice is orthogonal (4 atoms)
@@ -98,7 +101,9 @@ def fcc(alat: float, atoms, orthogonal: bool = False):
 
 
 @set_module("sisl.geom")
-def hcp(a: float, atoms, coa: float = 49 / 30, orthogonal: bool = False):
+def hcp(
+    a: float, atoms: AtomsLike, coa: float = 49 / 30, orthogonal: bool = False
+) -> float:
     """Hexagonal closed packed lattice with 2 (non-orthogonal) or 4 atoms (orthogonal)
 
     Parameters
@@ -148,7 +153,7 @@ def hcp(a: float, atoms, coa: float = 49 / 30, orthogonal: bool = False):
 
 
 @set_module("sisl.geom")
-def rocksalt(alat: float, atoms, orthogonal: bool = False):
+def rocksalt(alat: float, atoms: AtomsLike, orthogonal: bool = False) -> Geometry:
     """Two-element rocksalt lattice with 2 (non-orthogonal) or 8 atoms (orthogonal)
 
     This is equivalent to the NaCl crystal structure (halite).

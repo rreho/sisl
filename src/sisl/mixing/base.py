@@ -7,10 +7,10 @@ import operator as op
 from abc import abstractmethod
 from collections import deque
 from numbers import Integral
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, TypeVar, Union
+from typing import Any, Callable, Iterator, Optional, TypeVar, Union
 
 from sisl._internal import set_module
-from sisl._typing_ext.numpy import ArrayLike
+from sisl.typing import ArrayLike
 
 __all__ = [
     "BaseMixer",
@@ -36,6 +36,7 @@ TypeMetric = Callable[[Any, Any], Any]
 @set_module("sisl.mixing")
 class BaseMixer:
     r"""Base class mixer"""
+
     __slots__ = ()
 
     @abstractmethod
@@ -117,6 +118,7 @@ class CompositeMixer(BaseMixer):
 @set_module("sisl.mixing")
 class BaseWeightMixer(BaseMixer):
     r"""Base class mixer"""
+
     __slots__ = ("_weight",)
 
     def __init__(self, weight: TypeWeight = 0.2):
@@ -142,6 +144,7 @@ class BaseWeightMixer(BaseMixer):
 @set_module("sisl.mixing")
 class BaseHistoryWeightMixer(BaseWeightMixer):
     r"""Base class mixer with history"""
+
     __slots__ = ("_history",)
 
     def __init__(self, weight: TypeWeight = 0.2, history: TypeArgHistory = 0):

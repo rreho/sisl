@@ -1,6 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import os.path as osp
 
 import numpy as np
@@ -72,7 +74,8 @@ def test_nc_multiple_fail(sisl_tmp, sisl_system):
 
         DM[0, 0] = 1.0
         with pytest.raises(ValueError):
-            DM.write(sile)
+            with pytest.warns(sisl.SislWarning, match=r"changes the sparsity pattern"):
+                DM.write(sile)
 
 
 @pytest.mark.parametrize(

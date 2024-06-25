@@ -12,8 +12,8 @@ import numpy as np
 
 import sisl._array as _a
 from sisl._internal import set_module
-from sisl._typing_ext.numpy import ArrayLike, NDArray
 from sisl.linalg import solve_destroy
+from sisl.typing import ArrayLike, NDArray
 
 from .base import (
     BaseHistoryWeightMixer,
@@ -42,20 +42,20 @@ class DIISMixer(BaseHistoryWeightMixer):
 
     .. math::
 
-       \delta_i &= F_i^{\mathrm{out}} - F_i^{\mathrm{in}}
+       \boldsymbol\delta_i &= \mathbf f_i^{\mathrm{out}} - \mathbf f_i^{\mathrm{in}}
        \\
-       m_{ij} &= \langle \delta_i | \delta_j\rangle
+       \mathbf M_{ij} &= \langle \boldsymbol\delta_i | \boldsymbol\delta_j\rangle
 
     And then the mixing coefficients is calculated using the regular method
-    for a matrix :math:`\mathbf m`.
-    Generally the metric is calculated using :math:`\delta`, however, by
+    for a matrix :math:`\mathbf M`.
+    Generally the metric is calculated using :math:`\boldsymbol\delta`, however, by
     calling the object with an optional 3rd argument, the metric will use
-    that argument instead of :math:`\delta` but still use :math:`\delta` when
+    that argument instead of :math:`\boldsymbol\delta` but still use :math:`\boldsymbol\delta` when
     extrapolating the coefficients.
     This may be useful for testing various metrics based on alternate values.
 
     Alternatively one can pass a `metric` argument that can pre-process the
-    :math:`\delta` variable.
+    :math:`\boldsymbol\delta` variable.
 
     Parameters
     ----------
@@ -68,6 +68,7 @@ class DIISMixer(BaseHistoryWeightMixer):
     metric : callable, optional
        the metric used for the two values, defaults to ``lambda a, b: a.ravel().conj().dot(b.ravel).real``
     """
+
     __slots__ = ("_metric",)
 
     def __init__(
@@ -139,7 +140,7 @@ class DIISMixer(BaseHistoryWeightMixer):
         return c
 
     def mix(self, coefficients: NDArray) -> Any:
-        r"""Calculate a new variable :math:`f'` using history and input coefficients
+        r"""Calculate a new variable :math:`\mathbf f'` using history and input coefficients
 
         Parameters
         ----------
@@ -175,10 +176,11 @@ class AdaptiveDIISMixer(DIISMixer):
     to a minimum.
 
     Thus we can use the Lagrange multiplier to adjust the weight such that
-    for large values we know our next guess (:math:`f_{\mathrm{new}}`) will
+    for large values we know our next guess (:math:`\mathbf f'`) will
     be relatively far from the true saddle point, and for small values we
     will be close to the saddle point.
     """
+
     __slots__ = ("_weight_min", "_weight_delta")
 
     def __init__(

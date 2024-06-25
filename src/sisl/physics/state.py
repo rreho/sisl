@@ -1,17 +1,23 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 from functools import singledispatchmethod
 from numbers import Real
+from typing import Literal
 
 import numpy as np
 from numpy import bool_, einsum, exp, ndarray
+from scipy.sparse import csr_matrix
 
 import sisl._array as _a
+from sisl._core import Geometry
 from sisl._help import dtype_real_to_complex
 from sisl._internal import set_module
 from sisl.linalg import eigh_destroy
-from sisl.messages import warn
+from sisl.messages import deprecate_argument, warn
+from sisl.typing import GaugeType
 
 __all__ = ["degenerate_decouple", "Coefficient", "State", "StateC"]
 
@@ -50,7 +56,7 @@ def degenerate_decouple(state, M):
         state.state = degenerate_decouple(state.state, M)
     else:
         # since M may be a sparse matrix, we cannot use __matmul__
-        p = np.conj(state) @ M.dot(state.T)
+        p = np.conj(state) @ (M @ state.T)
         state = eigh_destroy(p)[1].T @ state
     return state
 
@@ -75,6 +81,10 @@ class _FakeMatrix:
     def dot(v):
         return v
 
+    @staticmethod
+    def __matmul__(v):
+        return v
+
     def multiply(self, v):
         try:
             if v.shape == self.shape:
@@ -85,6 +95,23 @@ class _FakeMatrix:
         except Exception:
             pass
         return v
+
+    def __getitem__(self, key):
+        n, m = self.n, self.m
+        if isinstance(key, tuple):
+            if key[0] == slice(None, None, 2):
+                n = n // 2
+            else:
+                raise RuntimeError
+            if key[1] == slice(None, None, 2):
+                m = m // 2
+            else:
+                raise RuntimeError
+        else:
+            if key == slice(None, None, 2):
+                n = n // 2
+
+        return self.__class__(n, m)
 
     @property
     def T(self):
@@ -108,23 +135,40 @@ information regarding the creation of the object
 """
 
     @singledispatchmethod
-    def _sanitize_index(self, idx):
+    def _sanitize_index(self, index) -> np.ndarray:
         r"""Ensure indices are transferred to acceptable integers"""
-        if idx is None:
+        if index is None:
             # in case __len__ is not defined, this will fail...
             return np.arange(len(self))
-        idx = _a.asarray(idx)
-        if idx.size == 0:
+        index = _a.asarray(index)
+        if index.size == 0:
             return _a.asarrayl([])
-        elif idx.dtype == bool_:
-            return idx.nonzero()[0]
-        return idx
+        elif index.dtype == bool_:
+            return index.nonzero()[0]
+        return index
 
-    @_sanitize_index.register(ndarray)
-    def _(self, idx):
-        if idx.dtype == bool_:
-            return np.flatnonzero(idx)
-        return idx
+    @_sanitize_index.register
+    def _(self, index: np.ndarray) -> np.ndarray:
+        if index.dtype == bool_:
+            return np.flatnonzero(index)
+        return index
+
+    @_sanitize_index.register
+    def _(self, index: slice) -> ndarray:
+        start, stop, step = index.start, index.stop, index.step
+        if start is None:
+            start = 0
+        if stop is None:
+            stop = len(self)
+        if step is None:
+            step = 1
+        return np.arange(start, stop, step)
+
+    def _geometry(self):
+        """Return the parent geometry if one is found"""
+        if isinstance(self.parent, Geometry):
+            return self.parent
+        return self.parent.geometry
 
 
 @set_module("sisl.physics")
@@ -179,18 +223,19 @@ coefficients retained in this object
         """Returns the shape of the coefficients"""
         return self.c.shape
 
-    def copy(self):
-        """Return a copy (only the coefficients are copied). ``parent`` and ``info`` are passed by reference"""
-        copy = self.__class__(self.c.copy(), self.parent)
-        copy.info = self.info
-        return copy
-
-    def degenerate(self, eps=1e-8):
+    @deprecate_argument(
+        "eps",
+        "atol",
+        "argument eps has been deprecated in favor of atol",
+        "0.15",
+        "0.16",
+    )
+    def degenerate(self, atol: float = 1e-8):
         """Find degenerate coefficients with a specified precision
 
         Parameters
         ----------
-        eps : float, optional
+        atol : float, optional
            the precision above which coefficients are not considered degenerate
 
         Returns
@@ -203,7 +248,7 @@ coefficients retained in this object
         dc = np.diff(self.c[sidx])
 
         # Degenerate indices
-        idx = (np.absolute(dc) <= eps).nonzero()[0]
+        idx = (np.absolute(dc) <= atol).nonzero()[0]
         if len(idx) == 0:
             # There are no degenerate coefficients
             return deg
@@ -214,47 +259,6 @@ coefficients retained in this object
         for idx in IDX:
             deg.append(np.append(sidx[idx], sidx[idx[-1] + 1]))
         return deg
-
-    def sub(self, idx, inplace=False):
-        """Return a new coefficient with only the specified coefficients
-
-        Parameters
-        ----------
-        idx : int or array_like
-            indices that are retained in the returned object
-        inplace : bool, optional
-            whether the values will be retained inplace
-
-        Returns
-        -------
-        Coefficient
-            a new coefficient only containing the requested elements, only if `inplace` is false
-        """
-        idx = self._sanitize_index(idx)
-        if inplace:
-            self.c = self.c[idx]
-        else:
-            sub = self.__class__(self.c[idx], self.parent)
-            sub.info = self.info
-            return sub
-
-    def remove(self, idx, inplace=False):
-        """Return a new coefficient without the specified coefficients
-
-        Parameters
-        ----------
-        idx : int or array_like
-            indices that are removed in the returned object
-        inplace : bool, optional
-            whether the values will be removed inplace
-
-        Returns
-        -------
-        Coefficient
-            a new coefficient without containing the requested elements
-        """
-        idx = np.delete(np.arange(len(self)), self._sanitize_index(idx))
-        return self.sub(idx, inplace)
 
     def __getitem__(self, key):
         """Return a new coefficient object with only one associated coefficient
@@ -354,53 +358,6 @@ state coefficients
         """Returns the shape of the state"""
         return self.state.shape
 
-    def copy(self):
-        """Return a copy (only the state is copied). ``parent`` and ``info`` are passed by reference"""
-        copy = self.__class__(self.state.copy(), self.parent)
-        copy.info = self.info
-        return copy
-
-    def sub(self, idx, inplace=False):
-        """Return a new state with only the specified states
-
-        Parameters
-        ----------
-        idx : int or array_like
-            indices that are retained in the returned object
-        inplace : bool, optional
-            whether the values will be retained inplace
-
-        Returns
-        -------
-        State
-           a new state only containing the requested elements, only if `inplace` is false
-        """
-        idx = self._sanitize_index(idx)
-        if inplace:
-            self.state = self.state[idx]
-        else:
-            sub = self.__class__(self.state[idx], self.parent)
-            sub.info = self.info
-            return sub
-
-    def remove(self, idx, inplace=False):
-        """Return a new state without the specified vectors
-
-        Parameters
-        ----------
-        idx : int or array_like
-            indices that are removed in the returned object
-        inplace : bool, optional
-            whether the values will be removed inplace
-
-        Returns
-        -------
-        State
-            a new state without containing the requested elements, only if `inplace` is false
-        """
-        idx = np.delete(np.arange(len(self)), self._sanitize_index(idx))
-        return self.sub(idx, inplace)
-
     def translate(self, isc):
         r"""Translate the vectors to a new unit-cell position
 
@@ -428,77 +385,6 @@ state coefficients
         if not np.allclose(k, 0):
             # there will only be a phase if k != 0
             s.state *= exp(2j * _pi * k @ isc)
-        return s
-
-    def tile(self, reps, axis, normalize=False, offset=0):
-        r"""Tile the state vectors for a new supercell
-
-        Tiling a state vector makes use of the Bloch factors for a state by utilizing
-
-        .. math::
-
-           \psi_{\mathbf k}(\mathbf r + \mathbf T) \propto e^{i\mathbf k\cdot \mathbf T}
-
-        where :math:`\mathbf T = i\mathbf a_0 + j\mathbf a_1 + l\mathbf a_2`. Note that `axis`
-        selects which of the :math:`\mathbf a_i` vectors that are translated and `reps` corresponds
-        to the :math:`i`, :math:`j` and :math:`l` variables. The `offset` moves the individual states
-        by said amount, i.e. :math:`i\to i+\mathrm{offset}`.
-
-        Parameters
-        ----------
-        reps : int
-           number of repetitions along a specific lattice vector
-        axis : int
-           lattice vector to tile along
-        normalize: bool, optional
-           whether the states are normalized upon return, may be useful for
-           eigenstates
-        offset: float, optional
-           the offset for the phase factors
-
-        See Also
-        --------
-        Geometry.tile
-        """
-        # the parent gets tiled
-        parent = self.parent.tile(reps, axis)
-        # the k-point gets reduced
-        k = _a.asarrayd(self.info.get("k", [0] * 3))
-
-        # now tile the state vectors
-        state = np.tile(self.state, (1, reps)).astype(np.complex128, copy=False)
-        # re-shape to apply phase-factors
-        state.shape = (len(self), reps, -1)
-
-        # Tiling stuff is trivial since we simply
-        # translate the bloch coefficients with:
-        #   exp(i k.T)
-        # with T being
-        #   i * a_0 + j * a_1 + k * a_2
-        # We can leave out the lattice vectors entirely
-        phase = exp(2j * _pi * k[axis] * (_a.aranged(reps) + offset))
-
-        state *= phase.reshape(1, -1, 1)
-        state.shape = (len(self), -1)
-
-        # update new k; when we double the system, we halve the periodicity
-        # and hence we need to account for this
-        k[axis] = k[axis] * reps % 1
-        while k[axis] > 0.5:
-            k[axis] -= 1
-        while k[axis] <= -0.5:
-            k[axis] += 1
-
-        # this allows us to make the same usable for StateC classes
-        s = self.copy()
-        s.parent = parent
-        s.state = state
-        # update the k-point
-        s.info = dict(**self.info)
-        s.info.update({"k": k})
-
-        if normalize:
-            return s.normalize()
         return s
 
     def __getitem__(self, key):
@@ -551,23 +437,32 @@ state coefficients
         """
         return self.norm2() ** 0.5
 
-    def norm2(self, sum=True):
+    @deprecate_argument(
+        "sum",
+        "projection",
+        "argument sum has been deprecated in favor of projection",
+        "0.15",
+        "0.16",
+    )
+    def norm2(self, projection: Literal["sum", "atoms", "basis"] = "sum"):
         r"""Return a vector with the norm of each state :math:`\langle\psi|\psi\rangle`
 
         Parameters
         ----------
-        sum : bool, optional
-           for true only a single number per state will be returned, otherwise the norm
-           per basis element will be returned.
+        projection :
+           whether to compute the norm per state as a single number, atom-resolved or per
+           basis dimension.
+
+        See Also
+        --------
+        inner: used method for calculating the squared norm.
 
         Returns
         -------
         numpy.ndarray
             the squared norm for each state
         """
-        if sum:
-            return self.inner()
-        return np.conj(self.state) * self.state
+        return self.inner(projection=projection)
 
     def ipr(self, q=2):
         r""" Calculate the inverse participation ratio (IPR) for arbitrary `q` values
@@ -575,10 +470,10 @@ state coefficients
         The inverse participation ratio is defined as
 
         .. math::
-            I_{q,i} = \frac{\sum_\nu |\psi_{i\nu}|^{2q}}{
-               \big[\sum_\nu |\psi_{i\nu}|^2\big]^q}
+            I_{q,\alpha} = \frac{\sum_i |\psi_{\alpha,i}|^{2q}}{
+               \big[\sum_i |\psi_{\alpha,i}|^2\big]^q}
 
-        where :math:`i` is the band index and :math:`\nu` is the orbital.
+        where :math:`\alpha` is the band index and :math:`i` is the orbital.
         The order of the IPR is defaulted to :math:`q=2`, see :eq:`ipr2` for details.
         The IPR may be used to distinguish Anderson localization and extended
         states:
@@ -588,7 +483,7 @@ state coefficients
            :nowrap:
 
             \begin{align}
-             \lim_{L\to\infty} I_{2,i} = \left\{
+             \lim_{L\to\infty} I_{2,\alpha} = \left\{
                \begin{aligned}
                 1/L^d &\quad \text{extended state}
                 \\
@@ -599,7 +494,7 @@ state coefficients
         For further details see :cite:`Murphy2011`. Note that for eigen states the IPR reduces to:
 
         .. math::
-            I_{q,i} = \sum_\nu |\psi_{i\nu}|^{2q}
+            I_{q,\alpha} = \sum_i |\psi_{\alpha,i}|^{2q}
 
         since the denominator is :math:`1^{q} = 1`.
 
@@ -609,7 +504,7 @@ state coefficients
           order parameter for the IPR
         """
         # This *has* to be a real value C * C^* == real
-        state_abs2 = self.norm2(sum=False).real
+        state_abs2 = self.norm2(projection="basis").real
         assert q >= 2, f"{self.__class__.__name__}.ipr requires q>=2"
         # abs2 is already having the exponent 2
         return (state_abs2**q).sum(-1) / state_abs2.sum(-1) ** q
@@ -638,13 +533,13 @@ state coefficients
         return s
 
     def outer(self, ket=None, matrix=None):
-        r"""Return the outer product by :math:`\sum_i|\psi_i\rangle\langle\psi'_i|`
+        r"""Return the outer product by :math:`\sum_\alpha|\psi_\alpha\rangle\langle\psi'_\alpha|`
 
         Parameters
         ----------
         ket : State, optional
            the ket object to calculate the outer product of, if not passed it will do the outer
-           product with itself. The object itself will always be the bra :math:`|\psi_i\rangle`
+           product with itself. The object itself will always be the bra :math:`|\psi_\alpha\rangle`
         matrix : array_like, optional
            whether a matrix is sandwiched between the ket and bra, defaults to the identity matrix.
            1D arrays will be treated as a diagonal matrix.
@@ -701,15 +596,46 @@ state coefficients
                 )
 
         if ndim == 2:
-            Aij = ket.T @ M.dot(np.conj(bra))
+            Aij = ket.T @ (M @ np.conj(bra))
         elif ndim == 1:
             Aij = einsum("ij,i,ik->jk", ket, M, np.conj(bra))
         elif ndim == 0:
             Aij = einsum("ij,ik->jk", ket * M, np.conj(bra))
         return Aij
 
-    def inner(self, ket=None, matrix=None, diag=True):
+    @deprecate_argument(
+        "diag",
+        "projection",
+        "argument diag has been deprecated in favor of projection",
+        "0.15",
+        "0.16",
+    )
+    def inner(
+        self,
+        ket=None,
+        matrix=None,
+        projection: Literal["diag", "atoms", "basis", "matrix"] = "diag",
+    ):
         r"""Calculate the inner product as :math:`\mathbf A_{ij} = \langle\psi_i|\mathbf M|\psi'_j\rangle`
+
+        Inner product calculation allows for a variety of things.
+
+        * for ``matrix`` it will compute off-diagonal elements as well
+
+        .. math::
+            \mathbf A_{\alpha\beta} = \langle\psi_\alpha|\mathbf M|\psi'_\beta\rangle
+
+        * for ``diag`` only the diagonal components will be returned
+
+        .. math::
+            \mathbf a_\alpha = \langle\psi_\alpha|\mathbf M|\psi_\alpha\rangle
+
+        * for ``basis``, only do inner products for individual states, but return them basis-resolved
+
+        .. math::
+            \mathbf A_{\alpha\beta} = \psi^*_{\alpha,\beta} \mathbf M|\psi_\alpha\rangle_\beta
+
+        * for ``atoms``, only do inner products for individual states, but return them atom-resolved
 
         Parameters
         ----------
@@ -719,17 +645,26 @@ state coefficients
         matrix : array_like, optional
            whether a matrix is sandwiched between the bra and ket, defaults to the identity matrix.
            1D arrays will be treated as a diagonal matrix.
-        diag : bool, optional
-           only return the diagonal matrix :math:`\mathbf A_{ii}`.
+        projection:
+            how to perform the final projection.
+            This can be used to sum specific sub-elements, return the diagonal, or the
+            full matrix.
+
+            * ``diag`` only return the diagonal of the inner product
+            * ``matrix`` a matrix with diagonals and the off-diagonals
+            * ``basis`` only do inner products for individual states, but return them basis-resolved
+            * ``atoms`` only do inner products for individual states, but return them atom-resolved
 
         Notes
         -----
-        This does *not* take into account a possible overlap matrix when non-orthogonal basis sets are used.
+        This does *not* take into account a possible overlap matrix when non-orthogonal basis sets are used. One have to add the overlap matrix in the `matrix` argument, if needed.
 
         Raises
         ------
         ValueError
             if the number of state coefficients are different for the bra and ket
+        RuntimeError
+            if the matrix shapes are incompatible with an atomic resolution conversion
 
         Returns
         -------
@@ -754,13 +689,13 @@ state coefficients
             # check whether this, and ket are both originating from
             # non-orthogonal basis. That would be non-ideal
             ket = ket.state
-        if len(ket.shape) == 1:
-            ket.shape = (1, -1)
+        if ket.ndim == 1:
+            ket = ket.reshape(1, -1)
 
         # check that the shapes matches (ket should be transposed)
         #  bra M ket
         if ndim == 0:
-            # M,N @ N, L
+            # M, N @ N, L
             if bra.shape[1] != ket.shape[1]:
                 raise ValueError(
                     f"{self.__class__.__name__}.inner requires the objects to have matching shapes bra @ ket bra={self.shape}, ket={ket.shape[::-1]}"
@@ -778,26 +713,71 @@ state coefficients
                     f"{self.__class__.__name__}.inner requires the objects to have matching shapes bra @ M @ ket bra={self.shape}, M={M.shape}, ket={ket.shape[::-1]}"
                 )
 
-        if diag:
+        projection = {
+            # temporary work-around for older codes where project/diag=T|F were allowed
+            True: "diag",
+            False: "matrix",
+            "sum": "diag",  # still allowed here (for bypass options)
+            "atoms": "atom",  # plural s allowed
+            "orbitals": "orbital",  # still allowed here (for bypass options)
+        }.get(projection, projection)
+
+        if projection in ("diag", "diagonal"):
             if bra.shape[0] != ket.shape[0]:
                 raise ValueError(
                     f"{self.__class__.__name__}.inner diagonal matrix product is non-square, please use diag=False or reduce number of vectors."
                 )
             if ndim == 2:
-                Aij = einsum("ij,ji->i", np.conj(bra), M.dot(ket.T))
+                Aij = einsum("ij,ji->i", np.conj(bra), M @ ket.T)
             elif ndim == 1:
                 Aij = einsum("ij,j,ij->i", np.conj(bra), M, ket)
             elif ndim == 0:
                 Aij = einsum("ij,ij->i", np.conj(bra), ket) * M
-        elif ndim == 2:
-            Aij = np.conj(bra) @ M.dot(ket.T)
-        elif ndim == 1:
-            Aij = einsum("ij,j,kj->ik", np.conj(bra), M, ket)
-        elif ndim == 0:
-            Aij = einsum("ij,kj->ik", np.conj(bra), ket) * M
+
+        elif projection in ("matrix", "none"):
+            if ndim == 2:
+                Aij = np.conj(bra) @ (M @ ket.T)
+            elif ndim == 1:
+                Aij = einsum("ij,j,kj->ik", np.conj(bra), M, ket)
+            elif ndim == 0:
+                Aij = einsum("ij,kj->ik", np.conj(bra), ket) * M
+
+        elif projection in ("atom", "basis", "orbital"):
+            if ndim == 2:
+                Aij = np.conj(bra) * (M @ ket.T).T
+            else:
+                Aij = np.conj(bra) * ket * M
+
+            # Now do the projection
+            if projection == "atom":
+                # Now we need to convert it
+                geom = self._geometry()
+                if Aij.shape[1] == geom.no * 2:
+                    # We have some kind of spin-configuration (hidden)
+                    def mapper(atom):
+                        return np.arange(
+                            geom.firsto[atom] * 2, geom.firsto[atom + 1] * 2
+                        )
+
+                elif Aij.shape[1] == geom.no:
+
+                    def mapper(atom):
+                        return np.arange(geom.firsto[atom], geom.firsto[atom + 1])
+
+                else:
+                    raise RuntimeError(
+                        f"{self.__class__.__name__}.inner could not determine "
+                        "the correct atom conversions."
+                    )
+                Aij = geom.apply(Aij, np.sum, mapper, axis=1)
+        else:
+            raise ValueError(
+                f"{self.__class__.__name__}.inner got unknown argument 'projection'={projection}"
+            )
+
         return Aij
 
-    def phase(self, method="max", ret_index=False):
+    def phase(self, method: Literal["max", "all"] = "max", ret_index: bool = False):
         r"""Calculate the Euler angle (phase) for the elements of the state, in the range :math:`]-\pi;\pi]`
 
         Parameters
@@ -805,7 +785,7 @@ state coefficients
         method : {'max', 'all'}
            for max, the phase for the element which has the largest absolute magnitude is returned,
            for all, all phases are calculated
-        ret_index : bool, optional
+        ret_index :
            return indices for the elements used when ``method=='max'``
         """
         if method == "max":
@@ -819,7 +799,7 @@ state coefficients
             f"{self.__class__.__name__}.phase only accepts method in [max, all]"
         )
 
-    def align_phase(self, other, ret_index=False, inplace=False):
+    def align_phase(self, other, ret_index: bool = False, inplace: bool = False):
         r"""Align `self` with the phases for `other`, a copy may be returned
 
         States will be rotated by :math:`\pi` provided the phase difference between the states are above :math:`|\Delta\theta| > \pi/2`.
@@ -828,9 +808,9 @@ state coefficients
         ----------
         other : State
            the other state to align onto this state
-        ret_index : bool, optional
+        ret_index :
            return which indices got swapped
-        inplace : bool, optional
+        inplace :
            rotate the states in-place
 
         See Also
@@ -858,7 +838,7 @@ state coefficients
             return out, idx
         return out
 
-    def align_norm(self, other, ret_index=False, inplace=False):
+    def align_norm(self, other, ret_index: bool = False, inplace: bool = False):
         r"""Align `self` with the site-norms of `other`, a copy may optionally be returned
 
         To determine the new ordering of `self` first calculate the residual norm of the site-norms.
@@ -874,9 +854,9 @@ state coefficients
         ----------
         other : State
            the other state to align against
-        ret_index : bool, optional
+        ret_index :
            also return indices for the swapped indices
-        inplace : bool, optional
+        inplace :
            swap states in-place
 
         Returns
@@ -894,11 +874,12 @@ state coefficients
         --------
         align_phase : rotate states such that their phases align
         """
-        snorm = self.norm2(False).real
-        onorm = other.norm2(False).real
+        snorm = self.norm2(projection="basis").real
+        onorm = other.norm2(projection="basis").real
 
         # Now find new orderings
         show_warn = False
+
         sidx = _a.fulli(len(self), -1)
         oidx = _a.emptyi(len(self))
         for i in range(len(self)):
@@ -928,56 +909,26 @@ state coefficients
         else:
             return self.sub(oidx)
 
-    def rotate(self, phi=0.0, individual=False):
-        r"""Rotate all states (in-place) to rotate the largest component to be along the angle `phi`
-
-        The states will be rotated according to:
-
-        .. math::
-
-            S' = S / S^\dagger_{\phi-\mathrm{max}} \exp (i \phi),
-
-        where :math:`S^\dagger_{\phi-\mathrm{max}}` is the phase of the component with the largest amplitude
-        and :math:`\phi` is the angle to align on.
-
-        Parameters
-        ----------
-        phi : float, optional
-           angle to align the state at (in radians), 0 is the positive real axis
-        individual : bool, optional
-           whether the rotation is per state, or a single maximum component is chosen.
-        """
-        # Convert angle to complex phase
-        phi = exp(1j * phi)
-        s = self.state.view()
-        if individual:
-            for i in range(len(self)):
-                # Find the maximum amplitude index
-                idx = np.argmax(np.absolute(s[i, :]))
-                s[i, :] *= phi * np.conj(s[i, idx] / np.absolute(s[i, idx]))
-        else:
-            # Find the maximum amplitude index among all elements
-            idx = np.unravel_index(np.argmax(np.absolute(s)), s.shape)
-            s *= phi * np.conj(s[idx] / np.absolute(s[idx]))
-
-    def change_gauge(self, gauge, offset=(0, 0, 0)):
+    def change_gauge(self, gauge: GaugeType, offset=(0, 0, 0)):
         r"""In-place change of the gauge of the state coefficients
 
         The two gauges are related through:
 
         .. math::
 
-            \tilde C_j = e^{i\mathbf k\mathbf r_j} C_j
+            \tilde C_\alpha = e^{i\mathbf k\mathbf r_\alpha} C_\alpha
 
-        where :math:`C_j` and :math:`\tilde C_j` belongs to the ``r`` and ``R`` gauge, respectively.
+        where :math:`C_\alpha` and :math:`\tilde C_\alpha` belongs to the ``orbital`` and ``cell`` gauge, respectively.
 
         Parameters
         ----------
-        gauge : {'R', 'r'}
+        gauge : {'cell', 'orbital'}
             specify the new gauge for the mode coefficients
         offset : array_like, optional
             whether the coordinates should be offset by another phase-factor
         """
+        gauge = {"R": "cell", "r": "orbital", "orbitals": "orbital"}.get(gauge, gauge)
+
         # These calls will fail if the gauge is not specified.
         # In that case it will not do anything
         if self.info.get("gauge", gauge) == gauge:
@@ -992,7 +943,8 @@ state coefficients
         if k.dot(k) <= 0.000000001:
             return
 
-        g = self.parent.geometry
+        # Try and bypass whether the parent is a geometry, or not
+        g = self._geometry()
         xyz = g.xyz + offset
         phase = xyz[g.o2a(_a.arangei(g.no)), :] @ (k @ g.rcell)
 
@@ -1001,12 +953,15 @@ state coefficients
                 # for NC/SOC we have a 2x2 spin-box per orbital
                 phase = np.repeat(phase, 2)
         except Exception:
-            pass
+            # This should enter in case where spin is not part of the parent
+            # So lets just check for sizes of the arrays
+            if self.shape[1] == g.no * 2:
+                phase = np.repeat(phase, 2)
 
-        if gauge == "r":
+        if gauge == "orbital":
             # R -> r gauge tranformation.
             self.state *= exp(-1j * phase).reshape(1, -1)
-        elif gauge == "R":
+        elif gauge == "cell":
             # r -> R gauge tranformation.
             self.state *= exp(1j * phase).reshape(1, -1)
 
@@ -1095,12 +1050,6 @@ coefficients assigned to each state
                 "having unequal length."
             )
 
-    def copy(self):
-        """Return a copy (only the coefficients and states are copied), ``parent`` and ``info`` are passed by reference"""
-        copy = self.__class__(self.state.copy(), self.c.copy(), self.parent)
-        copy.info = self.info
-        return copy
-
     def normalize(self):
         r"""Return a normalized state where each state has :math:`|\psi|^2=1`
 
@@ -1123,12 +1072,12 @@ coefficients assigned to each state
         s.info = self.info
         return s
 
-    def sort(self, ascending=True):
+    def sort(self, ascending: bool = True):
         """Sort and return a new `StateC` by sorting the coefficients (default to ascending)
 
         Parameters
         ----------
-        ascending : bool, optional
+        ascending :
             sort the contained elements ascending, else they will be sorted descending
         """
         if ascending:
@@ -1138,7 +1087,11 @@ coefficients assigned to each state
         return self.sub(idx)
 
     def derivative(
-        self, order=1, degenerate=1e-5, degenerate_dir=(1, 1, 1), matrix=False
+        self,
+        order: Literal[1, 2] = 1,
+        degenerate=1e-5,
+        degenerate_dir=(1, 1, 1),
+        matrix: bool = False,
     ):
         r"""Calculate the derivative with respect to :math:`\mathbf k` for a set of states up to a given order
 
@@ -1175,7 +1128,7 @@ coefficients assigned to each state
 
         Parameters
         ----------
-        order : {1, 2}
+        order :
            an integer specifying which order of the derivative is being calculated.
         degenerate : float or list of array_like, optional
            If a float is passed it is regarded as the degeneracy tolerance used to calculate the degeneracy
@@ -1184,7 +1137,7 @@ coefficients assigned to each state
            is required to decouple them. See `degenerate_dir` for the sum of directions.
         degenerate_dir : (3,), optional
            a direction used for degenerate decoupling. The decoupling based on the velocity along this direction
-        matrix : bool, optional
+        matrix :
            whether the full matrix or only the diagonal components are returned
 
         See Also
@@ -1259,7 +1212,7 @@ coefficients assigned to each state
         if degenerate is not None:
             # normalize direction
             degenerate_dir = _a.asarrayd(degenerate_dir)
-            degenerate_dir /= (degenerate_dir**2).sum() ** 0.5
+            degenerate_dir /= (degenerate_dir @ degenerate_dir) ** 0.5
 
             # de-coupling is only done for the 1st derivative
 
@@ -1293,24 +1246,22 @@ coefficients assigned to each state
             if matrix or order > 1:
                 # calculate the full matrix
                 v = np.empty([3, nstate, nstate], dtype=opt["dtype"])
-                v[0] = (cstate @ dPk[0].dot(state.T)).T
-                v[1] = (cstate @ dPk[1].dot(state.T)).T
-                v[2] = (cstate @ dPk[2].dot(state.T)).T
+                v[0] = cstate @ dPk[0] @ state.T
+                v[1] = cstate @ dPk[1] @ state.T
+                v[2] = cstate @ dPk[2] @ state.T
 
                 if matrix:
                     ret = (v,)
                 else:
-                    # numpy >= 1.9 returns a read-only view of the data,
-                    # so take a copy to ensure editable state
                     ret = (np.diagonal(v, axis1=1, axis2=2).copy(),)
 
             else:
                 # calculate projections on states
                 v = np.empty([3, nstate], dtype=opt["dtype"])
 
-                v[0] = einsum("ij,ji->i", cstate, dPk[0].dot(state.T))
-                v[1] = einsum("ij,ji->i", cstate, dPk[1].dot(state.T))
-                v[2] = einsum("ij,ji->i", cstate, dPk[2].dot(state.T))
+                v[0] = einsum("ij,ji->i", cstate, dPk[0] @ state.T)
+                v[1] = einsum("ij,ji->i", cstate, dPk[1] @ state.T)
+                v[2] = einsum("ij,ji->i", cstate, dPk[2] @ state.T)
 
                 ret = (v,)
 
@@ -1330,23 +1281,17 @@ coefficients assigned to each state
 
                         # calculate 2nd derivative
                         # xx
-                        vv[0, s] = cstate @ ddPk[0].dot(state[s]) - de * absv[0] ** 2
+                        vv[0, s] = cstate @ ddPk[0] @ state[s] - de * absv[0] ** 2
                         # yy
-                        vv[1, s] = cstate @ ddPk[1].dot(state[s]) - de * absv[1] ** 2
+                        vv[1, s] = cstate @ ddPk[1] @ state[s] - de * absv[1] ** 2
                         # zz
-                        vv[2, s] = cstate @ ddPk[2].dot(state[s]) - de * absv[2] ** 2
+                        vv[2, s] = cstate @ ddPk[2] @ state[s] - de * absv[2] ** 2
                         # yz
-                        vv[3, s] = (
-                            cstate @ ddPk[3].dot(state[s]) - de * absv[1] * absv[2]
-                        )
+                        vv[3, s] = cstate @ ddPk[3] @ state[s] - de * absv[1] * absv[2]
                         # xz
-                        vv[4, s] = (
-                            cstate @ ddPk[4].dot(state[s]) - de * absv[0] * absv[2]
-                        )
+                        vv[4, s] = cstate @ ddPk[4] @ state[s] - de * absv[0] * absv[2]
                         # xy
-                        vv[5, s] = (
-                            cstate @ ddPk[5].dot(state[s]) - de * absv[0] * absv[1]
-                        )
+                        vv[5, s] = cstate @ ddPk[5] @ state[s] - de * absv[0] * absv[1]
 
                 else:
                     vv = np.empty([6, nstate], dtype=opt["dtype"])
@@ -1360,21 +1305,21 @@ coefficients assigned to each state
 
                         # calculate 2nd derivative
                         # xx
-                        vv[0, s] = cstate[s] @ ddPk[0].dot(state[s]) - de @ absv[0] ** 2
+                        vv[0, s] = cstate[s] @ ddPk[0] @ state[s] - de @ absv[0] ** 2
                         # yy
-                        vv[1, s] = cstate[s] @ ddPk[1].dot(state[s]) - de @ absv[1] ** 2
+                        vv[1, s] = cstate[s] @ ddPk[1] @ state[s] - de @ absv[1] ** 2
                         # zz
-                        vv[2, s] = cstate[s] @ ddPk[2].dot(state[s]) - de @ absv[2] ** 2
+                        vv[2, s] = cstate[s] @ ddPk[2] @ state[s] - de @ absv[2] ** 2
                         # yz
-                        vv[3, s] = cstate[s] @ ddPk[3].dot(state[s]) - de @ (
+                        vv[3, s] = cstate[s] @ ddPk[3] @ state[s] - de @ (
                             absv[1] * absv[2]
                         )
                         # xz
-                        vv[4, s] = cstate[s] @ ddPk[4].dot(state[s]) - de @ (
+                        vv[4, s] = cstate[s] @ ddPk[4] @ state[s] - de @ (
                             absv[0] * absv[2]
                         )
                         # xy
-                        vv[5, s] = cstate[s] @ ddPk[5].dot(state[s]) - de @ (
+                        vv[5, s] = cstate[s] @ ddPk[5] @ state[s] - de @ (
                             absv[0] * absv[1]
                         )
 
@@ -1386,9 +1331,9 @@ coefficients assigned to each state
                 # calculate the full matrix
                 v = np.empty([3, nstate, nstate], dtype=opt["dtype"])
                 for s, e in enumerate(energy):
-                    v[0, s] = cstate @ (dPk[0] - e * dSk[0]).dot(state[s])
-                    v[1, s] = cstate @ (dPk[1] - e * dSk[1]).dot(state[s])
-                    v[2, s] = cstate @ (dPk[2] - e * dSk[2]).dot(state[s])
+                    v[0, s] = cstate @ (dPk[0] - e * dSk[0]) @ state[s]
+                    v[1, s] = cstate @ (dPk[1] - e * dSk[1]) @ state[s]
+                    v[2, s] = cstate @ (dPk[2] - e * dSk[2]) @ state[s]
 
                 if matrix:
                     ret = (v,)
@@ -1401,9 +1346,9 @@ coefficients assigned to each state
                 # calculate diagonal components on states
                 v = np.empty([3, nstate], dtype=opt["dtype"])
                 for s, e in enumerate(energy):
-                    v[0, s] = cstate[s] @ (dPk[0] - e * dSk[0]).dot(state[s])
-                    v[1, s] = cstate[s] @ (dPk[1] - e * dSk[1]).dot(state[s])
-                    v[2, s] = cstate[s] @ (dPk[2] - e * dSk[2]).dot(state[s])
+                    v[0, s] = cstate[s] @ (dPk[0] - e * dSk[0]) @ state[s]
+                    v[1, s] = cstate[s] @ (dPk[1] - e * dSk[1]) @ state[s]
+                    v[2, s] = cstate[s] @ (dPk[2] - e * dSk[2]) @ state[s]
 
                 ret = (v,)
 
@@ -1424,32 +1369,32 @@ coefficients assigned to each state
                         # calculate 2nd derivative
                         # xx
                         vv[0, s] = (
-                            cstate @ (ddPk[0] - e * ddSk[0]).dot(state[s])
+                            cstate @ (ddPk[0] - e * ddSk[0]) @ state[s]
                             - de * absv[0] ** 2
                         )
                         # yy
                         vv[1, s] = (
-                            cstate @ (ddPk[1] - e * ddSk[1]).dot(state[s])
+                            cstate @ (ddPk[1] - e * ddSk[1]) @ state[s]
                             - de * absv[1] ** 2
                         )
                         # zz
                         vv[2, s] = (
-                            cstate @ (ddPk[2] - e * ddSk[2]).dot(state[s])
+                            cstate @ (ddPk[2] - e * ddSk[2]) @ state[s]
                             - de * absv[2] ** 2
                         )
                         # yz
                         vv[3, s] = (
-                            cstate @ (ddPk[3] - e * ddSk[3]).dot(state[s])
+                            cstate @ (ddPk[3] - e * ddSk[3]) @ state[s]
                             - de * absv[1] * absv[2]
                         )
                         # xz
                         vv[4, s] = (
-                            cstate @ (ddPk[4] - e * ddSk[4]).dot(state[s])
+                            cstate @ (ddPk[4] - e * ddSk[4]) @ state[s]
                             - de * absv[0] * absv[2]
                         )
                         # xy
                         vv[5, s] = (
-                            cstate @ (ddPk[5] - e * ddSk[5]).dot(state[s])
+                            cstate @ (ddPk[5] - e * ddSk[5]) @ state[s]
                             - de * absv[0] * absv[1]
                         )
 
@@ -1466,31 +1411,31 @@ coefficients assigned to each state
                         # calculate 2nd derivative
                         # xx
                         vv[0, s] = (
-                            cstate[s] @ (ddPk[0] - e * ddSk[0]).dot(state[s])
+                            cstate[s] @ (ddPk[0] - e * ddSk[0]) @ state[s]
                             - de @ absv[0] ** 2
                         )
                         # yy
                         vv[1, s] = (
-                            cstate[s] @ (ddPk[1] - e * ddSk[1]).dot(state[s])
+                            cstate[s] @ (ddPk[1] - e * ddSk[1]) @ state[s]
                             - de @ absv[1] ** 2
                         )
                         # zz
                         vv[2, s] = (
-                            cstate[s] @ (ddPk[2] - e * ddSk[2]).dot(state[s])
+                            cstate[s] @ (ddPk[2] - e * ddSk[2]) @ state[s]
                             - de @ absv[2] ** 2
                         )
                         # yz
-                        vv[3, s] = cstate[s] @ (ddPk[3] - e * ddSk[3]).dot(
-                            state[s]
-                        ) - de @ (absv[1] * absv[2])
+                        vv[3, s] = cstate[s] @ (ddPk[3] - e * ddSk[3]) @ state[
+                            s
+                        ] - de @ (absv[1] * absv[2])
                         # xz
-                        vv[4, s] = cstate[s] @ (ddPk[4] - e * ddSk[4]).dot(
-                            state[s]
-                        ) - de @ (absv[0] * absv[2])
+                        vv[4, s] = cstate[s] @ (ddPk[4] - e * ddSk[4]) @ state[
+                            s
+                        ] - de @ (absv[0] * absv[2])
                         # xy
-                        vv[5, s] = cstate[s] @ (ddPk[5] - e * ddSk[5]).dot(
-                            state[s]
-                        ) - de @ (absv[0] * absv[1])
+                        vv[5, s] = cstate[s] @ (ddPk[5] - e * ddSk[5]) @ state[
+                            s
+                        ] - de @ (absv[0] * absv[1])
 
                 ret += (vv,)
 
@@ -1498,12 +1443,19 @@ coefficients assigned to each state
             return ret[0]
         return ret
 
-    def degenerate(self, eps):
+    @deprecate_argument(
+        "eps",
+        "atol",
+        "argument eps has been deprecated in favor of atol",
+        "0.15",
+        "0.16",
+    )
+    def degenerate(self, atol: float):
         """Find degenerate coefficients with a specified precision
 
         Parameters
         ----------
-        eps : float
+        atol :
            the precision above which coefficients are not considered degenerate
 
         Returns
@@ -1512,11 +1464,13 @@ coefficients assigned to each state
             a list of indices
         """
         deg = list()
+
+        # Sort them in ascending order
         sidx = np.argsort(self.c)
         dc = np.diff(self.c[sidx])
 
         # Degenerate indices
-        idx = (dc < eps).nonzero()[0]
+        idx = (dc < atol).nonzero()[0]
         if len(idx) == 0:
             # There are no degenerate coefficients
             return deg
@@ -1527,48 +1481,6 @@ coefficients assigned to each state
         for idx in IDX:
             deg.append(np.append(sidx[idx], sidx[idx[-1] + 1]))
         return deg
-
-    def sub(self, idx, inplace=False):
-        """Return a new state with only the specified states
-
-        Parameters
-        ----------
-        idx : int or array_like
-            indices that are retained in the returned object
-        inplace : bool, optional
-            whether the values will be retained inplace
-
-        Returns
-        -------
-        StateC
-            a new object with a subset of the states, only if `inplace` is false
-        """
-        idx = self._sanitize_index(idx).ravel()
-        if inplace:
-            self.state = self.state[idx]
-            self.c = self.c[idx]
-        else:
-            sub = self.__class__(self.state[idx, ...], self.c[idx], self.parent)
-            sub.info = self.info
-            return sub
-
-    def remove(self, idx, inplace=False):
-        """Return a new state without the specified indices
-
-        Parameters
-        ----------
-        idx : int or array_like
-            indices that are removed in the returned object
-        inplace : bool, optional
-            whether the values will be removed inplace
-
-        Returns
-        -------
-        StateC
-            a new state without containing the requested elements, only if `inplace` is false
-        """
-        idx = np.delete(np.arange(len(self)), self._sanitize_index(idx))
-        return self.sub(idx, inplace)
 
     def asState(self):
         s = State(self.state.copy(), self.parent)

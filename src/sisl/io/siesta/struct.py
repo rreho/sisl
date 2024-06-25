@@ -1,12 +1,16 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import numpy as np
 
-from sisl import Atom, AtomGhost, Atoms, AtomUnknown, Geometry, Lattice
+from sisl import Atom, AtomGhost, Atoms, Geometry, Lattice
 from sisl._internal import set_module
+from sisl.messages import deprecate_argument
 from sisl.unit.siesta import unit_convert
 
+from .._help import _fill_basis_empty
 from ..sile import add_sile, sile_fh_open, sile_raise_write
 from .sile import SileSiesta
 
@@ -21,15 +25,15 @@ class structSileSiesta(SileSiesta):
     """Geometry file"""
 
     @sile_fh_open()
-    def write_geometry(self, geometry, fmt=".9f"):
+    def write_geometry(self, geometry: Geometry, fmt: str = ".9f"):
         """Writes the geometry to the contained file
 
         Parameters
         ----------
-        geometry : Geometry
-           geometry to write in the XV file
-        fmt : str, optional
-           the precision used for writing the XV file
+        geometry :
+           geometry to write in the STRUCT file
+        fmt :
+           the precision used for writing the coordinates in the file
         """
         # Check that we can write to the file
         sile_raise_write(self)
@@ -51,7 +55,7 @@ class structSileSiesta(SileSiesta):
                 self._write(fmt_str.format(ips + 1, a.Z, *fxyz[ia]))
 
     @sile_fh_open()
-    def read_lattice(self):
+    def read_lattice(self) -> Lattice:
         """Returns `Lattice` object from the STRUCT file"""
 
         cell = np.empty([3, 3], np.float64)
@@ -61,14 +65,32 @@ class structSileSiesta(SileSiesta):
         return Lattice(cell)
 
     @sile_fh_open()
-    def read_geometry(self, species_Z=False):
-        """Returns a `Geometry` object from the STRUCT file
+    @deprecate_argument(
+        "species_Z",
+        "species_as_Z",
+        "use species_as_Z= instead of species_Z=",
+        "0.15",
+        "0.16",
+    )
+    @deprecate_argument(
+        "species_as_Z",
+        None,
+        "species_as_Z= is deprecated, please pass an Atoms object with the basis information as atoms=",
+        "0.15",
+        "0.16",
+    )
+    def read_geometry(
+        self, atoms: Optional[Atoms, Geometry] = None, species_as_Z: bool = False
+    ) -> Geometry:
+        """Returns a `Geometry` object from the ``STRUCT`` file
 
         Parameters
         ----------
-        species_Z : bool, optional
-           if ``True`` the atomic numbers are the species indices (useful when
-           reading the ChemicalSpeciesLabel block simultaneously).
+        atoms :
+            an object containing the basis information, is useful to overwrite
+            the atoms object contained in the geometry.
+        species_as_Z :
+            Deprecated, it does nothing!
 
         Returns
         -------
@@ -84,28 +106,21 @@ class structSileSiesta(SileSiesta):
         for ia in range(na):
             line = self.readline().split()
             sp[ia] = int(line[0])
-            if species_Z:
-                atms[ia] = Atom(sp[ia])
-            else:
-                atms[ia] = Atom(int(line[1]))
+            Z = int(line[1])
+
+            atms[ia] = Atom(Z)
+
             xyz[ia, :] = line[2:5]
 
         xyz = xyz @ lattice.cell
 
-        # Ensure correct sorting
-        max_s = sp.max()
-        sp -= 1
-        # Ensure we can remove the atom after having aligned them
-        atms2 = Atoms(AtomUnknown(1000), na=na)
-        for i in range(max_s):
-            idx = (sp[:] == i).nonzero()[0]
-            if len(idx) == 0:
-                # Always ensure we have "something" for the unoccupied places
-                atms2[idx] = AtomUnknown(1000 + i)
-            else:
-                atms2[idx] = atms[idx[0]]
+        if atoms is None:
+            atoms = atms
 
-        return Geometry(xyz, atms2.reduce(), lattice=lattice)
+        # Ensure correct sorting
+        atms2 = _fill_basis_empty(sp - 1, atoms)
+
+        return Geometry(xyz, atms2, lattice=lattice)
 
     def ArgumentParser(self, p=None, *args, **kwargs):
         """Returns the arguments that is available for this Sile"""

@@ -1,8 +1,11 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import os.path as osp
 from numbers import Integral
+from typing import Optional
 
 import numpy as np
 
@@ -12,7 +15,7 @@ from sisl._internal import set_module
 from sisl.messages import deprecate_argument
 from sisl.utils import str_spec
 
-from ._multiple import SileBinder
+from ._multiple import SileBinder, postprocess_tuple
 
 # Import sile objects
 from .sile import *
@@ -20,7 +23,7 @@ from .sile import *
 __all__ = ["xsfSile"]
 
 
-def _get_kw_index(key):
+def _get_kw_index(key: str):
     # Get the integer in a line like 'ATOMS 2', converted to 0-indexing, and with -1 if no int is there
     kl = key.split()
     if len(kl) == 1:
@@ -28,7 +31,7 @@ def _get_kw_index(key):
     return int(kl[1]) - 1
 
 
-def reset_values(*names_values, animsteps=False):
+def reset_values(*names_values, animsteps: bool = False):
     if animsteps:
 
         def reset(self):
@@ -47,19 +50,6 @@ def reset_values(*names_values, animsteps=False):
     return reset
 
 
-def postprocess(*funcs):
-    """Post-processes the returned value according to the funcs for multiple data"""
-
-    def post(ret):
-        nonlocal funcs
-        if isinstance(ret[0], tuple):
-            return tuple(func(r) for r, func in zip(zip(*ret), funcs))
-        return funcs[0](ret)
-
-    return post
-
-
-# Implementation notice!
 # The XSF files are compatible with Vesta, but ONLY
 # if there are no empty lines!
 @set_module("sisl.io")
@@ -89,20 +79,20 @@ class xsfSile(Sile):
         else:
             self._geometry_max = kwargs.get("steps", -1)
         self._geometry_write = 0
-        self._read_type = None
-        self._read_cell = None
+        self._r_type = None
+        self._r_cell = None
 
-    def _write_key(self, key):
+    def _write_key(self, key: str):
         self._write(f"{key}\n")
 
-    def _write_key_index(self, key):
+    def _write_key_index(self, key: str):
         # index is 1-based in file
         if self._geometry_max > 1:
             self._write(f"{key} {self._geometry_write + 1}\n")
         else:
             self._write(f"{key}\n")
 
-    def _write_once(self, string):
+    def _write_once(self, string: str):
         if self._geometry_write <= 0:
             self._write(string)
 
@@ -111,17 +101,15 @@ class xsfSile(Sile):
             self._write(f"ANIMSTEPS {self._geometry_max}\n")
 
     @sile_fh_open(reset=reset_values(("_geometry_write", 0), animsteps=True))
-    @deprecate_argument(
-        "sc", "lattice", "use lattice= instead of sc=", from_version="0.15"
-    )
-    def write_lattice(self, lattice, fmt=".8f"):
+    @deprecate_argument("sc", "lattice", "use lattice= instead of sc=", "0.15", "0.16")
+    def write_lattice(self, lattice: Lattice, fmt: str = ".8f"):
         """Writes the supercell to the contained file
 
         Parameters
         ----------
-        lattice : Lattice
+        lattice :
            the supercell to be written
-        fmt : str, optional
+        fmt :
            used format for the precision of the data
         """
         # Check that we can write to the file
@@ -134,11 +122,12 @@ class xsfSile(Sile):
             "# File created by: sisl {}\n#\n".format(strftime("%Y-%m-%d", gmtime()))
         )
 
-        if all(lattice.nsc == 1):
+        pbc = lattice.pbc
+        if pbc.sum() == 0:
             self._write_once("MOLECULE\n#\n")
-        elif all(lattice.nsc[:2] > 1):
+        elif all(pbc == (True, True, False)):
             self._write_once("SLAB\n#\n")
-        elif lattice.nsc[0] > 1:
+        elif all(pbc == (True, False, False)):
             self._write_once("POLYMER\n#\n")
         else:
             self._write_once("CRYSTAL\n#\n")
@@ -161,14 +150,14 @@ class xsfSile(Sile):
         #    self._write(fmt_str.format(*convcell[i, :]))
 
     @sile_fh_open(reset=reset_values(("_geometry_write", 0), animsteps=True))
-    def write_geometry(self, geometry, fmt=".8f", data=None):
+    def write_geometry(self, geometry: Geometry, fmt: str = ".8f", data=None):
         """Writes the geometry to the contained file
 
         Parameters
         ----------
-        geometry : Geometry
+        geometry :
            the geometry to be written
-        fmt : str, optional
+        fmt :
            used format for the precision of the data
         data : (geometry.na, 3), optional
            auxiliary data associated with the geometry to be saved
@@ -202,10 +191,12 @@ class xsfSile(Sile):
                 self._write(fmt_str.format(geometry.atoms[ia].Z, *geometry.xyz[ia, :]))
 
     @sile_fh_open()
-    def _r_geometry_next(self, lattice=None, atoms=None, ret_data=False):
+    def _r_geometry_next(
+        self, lattice: Optional[Lattice] = None, atoms=None, ret_data: bool = False
+    ) -> Geometry:
         if lattice is None:
             # fetch the prior read cell value
-            lattice = self._read_cell
+            lattice = self._r_cell
 
         # initialize all things
         cell = None
@@ -281,33 +272,37 @@ class xsfSile(Sile):
                 )
 
             elif line.startswith("CRYSTAL"):
-                self._read_type = "CRYSTAL"
+                self._r_type = "CRYSTAL"
             elif line.startswith("SLAB"):
-                self._read_type = "SLAB"
+                self._r_type = "SLAB"
             elif line.startswith("POLYMER"):
-                self._read_type = "POLYMER"
+                self._r_type = "POLYMER"
             elif line.startswith("MOLECULE"):
-                self._read_type = "MOLECULE"
+                self._r_type = "MOLECULE"
 
-        typ = self._read_type
+        typ = self._r_type
         if typ == "CRYSTAL":
-            nsc = [3, 3, 3]
+            bc = ["periodic", "periodic", "periodic"]
         elif typ == "SLAB":
-            nsc = [3, 3, 1]
+            bc = ["periodic", "periodic", "unknown"]
         elif typ == "POLYMER":
-            nsc = [3, 1, 1]
+            bc = ["periodic", "unknown", "unknown"]
+        elif typ == "MOLECULE":
+            bc = ["unknown", "unknown", "unknown"]
         else:
-            nsc = [1, 1, 1]
+            bc = ["unknown", "unknown", "unknown"]
 
         cell = None
 
         if primvec is not None:
-            cell = Lattice(primvec, nsc=nsc)
+            cell = Lattice(primvec, boundary_condition=bc)
         elif lattice is not None:
             cell = lattice
 
         elif typ == "MOLECULE":
-            cell = Lattice(np.diag(xyz.max(0) - xyz.min(0) + 10.0))
+            cell = Lattice(
+                np.diag(xyz.max(0) - xyz.min(0) + 10.0), boundary_condition=bc
+            )
 
         if cell is None:
             raise ValueError(
@@ -315,7 +310,7 @@ class xsfSile(Sile):
             )
 
         # overwrite the currently read cell
-        self._read_cell = cell
+        self._r_cell = cell
 
         if atoms is None:
             # this ensures that we will not parse atoms unless required
@@ -332,25 +327,37 @@ class xsfSile(Sile):
             return geom, _a.arrayd(data)
         return geom
 
-    @SileBinder(postprocess=postprocess(list, list))
-    @deprecate_argument(
-        "sc", "lattice", "use lattice= instead of sc=", from_version="0.15"
-    )
-    def read_geometry(self, lattice=None, atoms=None, ret_data=False):
-        """Geometry contained in file, and optionally the associated data
+    @SileBinder(postprocess=postprocess_tuple(list))
+    def read_basis(self) -> Atoms:
+        """Basis set (`Atoms`) contained in file"""
+        ret = self._r_geometry_next()
+        if ret is None:
+            return ret
+        return ret.atoms
 
-        If the file contains more geometries, one can read multiple geometries
-        by using the arguments `start`, `stop` and `step`.
-        The default is to read the first geometry, only.
+    @SileBinder(postprocess=postprocess_tuple(list))
+    def read_lattice(self) -> Lattice:
+        """Lattice contained in file"""
+        ret = self._r_geometry_next()
+        if ret is None:
+            return ret
+        return ret.lattice
+
+    @SileBinder(postprocess=postprocess_tuple(list))
+    @deprecate_argument("sc", "lattice", "use lattice= instead of sc=", "0.15", "0.16")
+    def read_geometry(
+        self, lattice: Optional[Lattice] = None, atoms=None, ret_data: bool = False
+    ) -> Geometry:
+        """Geometry contained in file, and optionally the associated data
 
         Parameters
         ----------
-        lattice : Lattice, optional
+        lattice :
             the supercell in case the lattice vectors are not present in the current
             block.
         atoms : Atoms, optional
             atomic species used regardless of the contained atomic species
-        ret_data : bool, optional
+        ret_data :
            in case the the file has auxiliary data, return that as well.
         """
         return self._r_geometry_next(lattice=lattice, atoms=atoms, ret_data=ret_data)
@@ -474,7 +481,7 @@ class xsfSile(Sile):
 
         Parameters
         ----------
-        p : ``argparse.ArgumentParser``
+        p : `argparse.ArgumentParser`
            the parser which gets amended the additional output options.
         """
         import argparse

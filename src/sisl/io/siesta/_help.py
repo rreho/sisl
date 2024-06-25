@@ -1,12 +1,15 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
+import warnings
+
 import numpy as np
 
 import sisl._array as _a
 from sisl import SislError
 from sisl.messages import warn
-from sisl.sparse import _rows_and_cols
 
 try:
     from . import _siesta
@@ -29,10 +32,9 @@ def _ensure_diagonal(csr):
     """
     old_nnz = csr.nnz
     csr += csr.diags(0, dim=1)
-    if csr.nnz != old_nnz:
-        warn(
-            "ensuring the sparse matrix having diagonal elements changed the sparsity pattern."
-        )
+    n_added = csr.nnz - old_nnz
+    if n_added > 0:
+        warn(f"added {n_added} diagonal elements. This changes the sparsity pattern.")
 
 
 def _csr_from_siesta(geom, csr):
@@ -139,8 +141,8 @@ def _mat_spin_convert(M, spin=None):
 def _geom2hsx(geometry):
     """Convert the geometry into the correct lists of species and lists"""
     atoms = geometry.atoms
-    nspecie = atoms.nspecie
-    isa = atoms.specie
+    nspecies = atoms.nspecies
+    isa = atoms.species
     label, Z, no = [], [], []
     n, l, zeta = [], [], []
     for atom in atoms.atom:

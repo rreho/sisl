@@ -1,7 +1,10 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import gzip
+import logging
 import re
 from functools import reduce, wraps
 from io import TextIOBase
@@ -12,11 +15,13 @@ from pathlib import Path
 from textwrap import dedent, indent
 from typing import Any, Callable, Optional, Union
 
+import sisl.io._exceptions as _exceptions
 from sisl._environ import get_environ_variable
 from sisl._internal import set_module
 from sisl.messages import SislInfo, SislWarning, deprecate, info, warn
 from sisl.utils.misc import str_spec
 
+from ._exceptions import *
 from ._help import *
 
 # Public used objects
@@ -28,10 +33,8 @@ __all__ += [
     "Sile",
     "SileCDF",
     "SileBin",
-    "SileError",
-    "SileWarning",
-    "SileInfo",
 ]
+__all__.extend(_exceptions.__all__)
 
 # Decorators or sile-specific functions
 __all__ += ["sile_fh_open", "sile_raise_write", "sile_raise_read"]
@@ -73,12 +76,11 @@ class _sile_rule:
         self.base_names = [c.__name__.lower() for c in self.bases]
 
     def __str__(self):
-        s = "{cls}{{case={case}, suffix={suffix}, gzip={gzip},\n ".format(
-            cls=self.cls.__name__, case=self.case, suffix=self.suffix, gzip=self.gzip
+        s = ",\n ".join(map(lambda x: x.__name, self.bases))
+        return (
+            f"{self.cls.__name__}{{case={self.case}, "
+            f"suffix={self.suffix}, gzip={self.gzip},\n {s}\n}}"
         )
-        for b in self.bases:
-            s += f" {b.__name__},\n "
-        return s[:-3] + "\n}"
 
     def __repr__(self):
         return (
@@ -313,7 +315,7 @@ def get_sile_class(filename, *args, **kwargs):
         # Check for files without ending, or that they are directly zipped
         lext = splitext(f)
         while len(lext[1]) > 0:
-            end = lext[1] + end
+            end = f"{lext[1]}{end}"
             if end[0] == ".":
                 end_list.append(end[1:])
             else:
@@ -521,8 +523,8 @@ class BaseSile:
         """
         for key in kwargs.keys():
             # Loop all keys and try to read the quantities
-            if hasattr(self, "read_" + key):
-                func = getattr(self, "read_" + key)
+            if hasattr(self, f"read_{key}"):
+                func = getattr(self, f"read_{key}")
                 # Call read
                 return func(kwargs[key], **kwargs)
 
@@ -549,8 +551,8 @@ class BaseSile:
 
         for key in kwargs.keys():
             # Loop all keys and try to write the quantities
-            if hasattr(self, "write_" + key):
-                func = getattr(self, "write_" + key)
+            if hasattr(self, f"write_{key}"):
+                func = getattr(self, f"write_{key}")
                 # Call write
                 func(kwargs[key], **kwargs)
 
@@ -561,7 +563,6 @@ class BaseSile:
 
         This method can be overwritten.
         """
-        pass
 
     def _base_setup(self, *args, **kwargs):
         """Setup the `Sile` after initialization
@@ -597,12 +598,14 @@ class BaseSile:
             deprecate(
                 f"{self.__class__.__name__}.read_supercell is deprecated in favor of read_lattice",
                 "0.15",
+                "0.16",
             )
             return getattr(self, "read_lattice")
         if name == "write_supercell" and hasattr(self, "write_lattice"):
             deprecate(
                 f"{self.__class__.__name__}.write_supercell is deprecated in favor of write_lattice",
                 "0.15",
+                "0.16",
             )
             return getattr(self, "write_lattice")
         return getattr(self.fh, name)
@@ -633,7 +636,15 @@ class BaseSile:
         p : ArgumentParser
            the argument parser to add the arguments to.
         """
-        pass
+
+    def _log(self, msg, *args, level=logging.INFO, **kwargs):
+        """Provide a log message to the logging mechanism"""
+        if not hasattr(self, "_logger"):
+            self._logger = logging.getLogger(
+                f"{self.__module__}.{self.__class__.__name__}|{self.base_file}"
+            )
+        logger = self._logger
+        logger.log(level, msg, *args, **kwargs)
 
     def __str__(self):
         """Return a representation of the `Sile`"""
@@ -744,7 +755,6 @@ class BufferSile:
 
     def close(self):
         """Will not close the file since this is passed by the user"""
-        pass
 
 
 @set_module("sisl.io")
@@ -840,9 +850,7 @@ class Info:
                 inst.fh.seek(loc)
 
             if not prop.found:
-                # TODO see if this should just be a warning? Perhaps it would be ok that it can't be
-                # found.
-                info(f"Attribute {attr} could not be found in {inst}")
+                prop.not_found(inst, prop)
 
             return prop.value
 
@@ -874,9 +882,23 @@ class Info:
             the default value of the attribute
         found:
             whether the value has been found in the file.
+        not_found: callable or str or Exception
+            what to do when the attribute is not found, defaults to raise a SislInfo.
+            It should accept 2 arguments, the object calling it, and the attribute.
+
+                def not_found(obj, attr): # do something
         """
 
-        __slots__ = ("attr", "regex", "parser", "updatable", "value", "found", "doc")
+        __slots__ = (
+            "attr",
+            "regex",
+            "parser",
+            "updatable",
+            "value",
+            "found",
+            "doc",
+            "not_found",
+        )
 
         def __init__(
             self,
@@ -887,6 +909,7 @@ class Info:
             updatable: bool = False,
             default: Optional[Any] = None,
             found: bool = False,
+            not_found: Optional[Callable[[Any, InfoAttr], None]] = None,
         ):
             self.attr = attr
             if isinstance(regex, str):
@@ -897,6 +920,45 @@ class Info:
             self.value = default
             self.found = found
             self.doc = doc
+
+            def not_found_factory(method):
+                # first check for a class, then check whether it is a specific class
+                # otherwise a TypeError would be raised...
+                if isinstance(method, type) and issubclass(method, BaseException):
+
+                    def not_found(obj, attr):
+                        raise method(
+                            f"Attribute {attr.attr} could not be found in {obj}."
+                        )
+
+                else:
+
+                    def not_found(obj, attr):
+                        method(f"Attribute {attr.attr} could not be found in {obj}.")
+
+                return not_found
+
+            if not_found is None:
+                not_found = not_found_factory(info)
+
+            elif isinstance(not_found, str):
+                if not_found == "info":
+                    not_found = not_found_factory(info)
+                elif not_found == "warn":
+                    not_found = not_found_factory(warn)
+                elif not_found == "error":
+                    not_found = not_found_factory(KeyError)
+                elif not_found == "ignore":
+                    not_found = lambda obj, attr: None
+                else:
+                    raise ValueError(
+                        f"{self.__class__.__name__} instantiated with unrecognized value in 'not_found' argument, got {not_found}."
+                    )
+
+            elif isinstance(not_found, type) and issubclass(not_found, BaseException):
+                not_found = not_found_factory(not_found)
+
+            self.not_found = not_found
 
         def process(self, line):
             if self.found and not self.updatable:
@@ -920,6 +982,7 @@ class Info:
                 updatable=self.updatable,
                 default=self.value,
                 found=self.found,
+                not_found=self.not_found,
             )
 
         def documentation(self):
@@ -1483,7 +1546,7 @@ def sile_raise_write(self, ok=("w", "a")):
         raise SileError(
             (
                 "Writing to file not possible; allowed "
-                "modes={}, used mode={}".format(ok, self._mode)
+                f"modes={ok}, used mode={self._mode}"
             ),
             self,
         )
@@ -1499,36 +1562,3 @@ def sile_raise_read(self, ok=("r", "a")):
             f"modes={ok}, used mode={self._mode}",
             self,
         )
-
-
-@set_module("sisl.io")
-class SileError(IOError):
-    """Define an error object related to the Sile objects"""
-
-    def __init__(self, value, obj=None):
-        self.value = value
-        self.obj = obj
-
-    def __str__(self):
-        if self.obj:
-            return f"{self.value!s} in {self.obj!s}"
-        else:
-            return self.value
-
-
-@set_module("sisl.io")
-class SileWarning(SislWarning):
-    """Warnings that informs users of things to be carefull about when using their retrieved data
-
-    These warnings should be issued whenever a read/write routine is unable to retrieve all information
-    but are non-influential in the sense that sisl is still able to perform the action.
-    """
-
-    pass
-
-
-@set_module("sisl.io")
-class SileInfo(SislInfo):
-    """Information for the user, this is hidden in a warning, but is not as severe so as to issue a warning."""
-
-    pass

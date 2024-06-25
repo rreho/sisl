@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 # We will use cmake_path for file-name manipulation
 
+list(APPEND CMAKE_MESSAGE_CONTEXT "sisl")
+
 message(STATUS "Building with CMake version: ${CMAKE_VERSION}")
 if(SKBUILD)
   message(STATUS "Building with scikit-build-core: ${SKBUILD_CORE_VERSION}")
@@ -26,7 +28,20 @@ find_package(Python COMPONENTS
   REQUIRED)
 
 # Retrive the cython executable
+message(STATUS "Locating Cython executable")
 find_program(CYTHON_EXECUTABLE "cython" REQUIRED)
+execute_process(COMMAND
+  "${CYTHON_EXECUTABLE}" --version
+  OUTPUT_QUIET
+  OUTPUT_VARIABLE CYTHON_VERSION
+  RESULT_VARIABLE CYTHON_VERSION_ERR
+  OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+# Print it out
+message(STATUS "Cython version information [${CYTHON_EXECUTABLE} --version]: ${CYTHON_VERSION}")
+if(CYTHON_VERSION_ERR)
+  message(SEND_ERROR "ERROR: Cython version detection failed, this might be problematic")
+endif()
 
 
 # Define global definitions
@@ -42,12 +57,12 @@ set(CMAKE_SHARED_MODULE_PREFIX "")
 # Determine whether we are in CIBUILDWHEEL
 # and whether we are building for the universal target
 set(_def_fortran TRUE)
-if( APPLE AND
-    "$ENV{CIBUILDWHEEL}" STREQUAL "1" AND
-    "$ENV{CIBW_ARCHS}" MATCHES "(universal2|arm64)")
-  # Disable fortran here, it shouldn't be needed
-  set(_def_fortran FALSE)
-endif()
+#if( APPLE AND
+#    "$ENV{CIBUILDWHEEL}" STREQUAL "1" AND
+#    "$ENV{CIBW_ARCHS}" MATCHES "(universal2|arm64)")
+#  # Disable fortran here, it shouldn't be needed
+#  set(_def_fortran FALSE)
+#endif()
 
 option(WITH_FORTRAN
   "Whether to compile and ship fortran sources (default True)" ${_def_fortran})
@@ -63,8 +78,8 @@ if( WITH_FORTRAN )
     "Report timings on routine exits" FALSE)
 endif()
 
-#option(WITH_COVERAGE
-#  "Add instructions for coverage in Cython files" FALSE)
+option(WITH_COVERAGE
+  "Add instructions for coverage in Cython files" FALSE)
 option(WITH_LINE_DIRECTIVES
   "Create line-directives in cythonized sources" FALSE)
 option(WITH_ANNOTATE
@@ -113,6 +128,9 @@ list(POP_BACK CMAKE_MESSAGE_INDENT)
 
 
 # Parse Cython global options
+if(WITH_COVERAGE)
+  add_compile_definitions(CYTHON_TRACE_NOGIL=1)
+endif()
 if(WITH_ANNOTATE)
   list(APPEND CYTHON_FLAGS --annotate)
 endif()
@@ -176,7 +194,7 @@ endif(WITH_FORTRAN)
 message(STATUS "sisl options")
 list(APPEND CMAKE_MESSAGE_INDENT "  ")
 
-#cmake_print_variables(WITH_COVERAGE)
+cmake_print_variables(WITH_COVERAGE)
 cmake_print_variables(WITH_ANNOTATE)
 cmake_print_variables(WITH_LINE_DIRECTIVES)
 cmake_print_variables(WITH_GDB)
@@ -287,7 +305,7 @@ function(add_cython_library)
   if(NOT DEFINED _c_SOURCE)
     list(GET _c_UNPARSED_ARGUMENTS 0 _c_SOURCE)
   endif()
-  
+
   # Parse simple flags
   if(NOT DEFINED _c_CYTHON_EXECUTABLE)
     set(_c_CYTHON_EXECUTABLE "${CYTHON_EXECUTABLE}")
@@ -617,7 +635,7 @@ function(add_f2py_library)
     VERBATIM
     COMMENT "Generating module file from signature ${_f_SIGNATURE}"
   )
-    
+
   python_add_library(${_f_LIBRARY} WITH_SOABI
     MODULE "${_module_file}" ${_f_SOURCES} ${_wrappers}
     )

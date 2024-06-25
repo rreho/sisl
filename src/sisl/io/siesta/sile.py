@@ -1,6 +1,7 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
 
 try:
     from . import _siesta
@@ -11,9 +12,41 @@ except ImportError:
 
 from sisl._internal import set_module
 
-from ..sile import Sile, SileBin, SileCDF, SileError
+from ..sile import (
+    MissingInputSileError,
+    MissingInputSileInfo,
+    Sile,
+    SileBin,
+    SileCDF,
+    SileError,
+    missing_input,
+)
 
-__all__ = ["SileSiesta", "SileCDFSiesta", "SileBinSiesta"]
+__all__ = [
+    "SileSiesta",
+    "SileCDFSiesta",
+    "SileBinSiesta",
+    "MissingFDFSiestaError",
+    "MissingFDFSiestaInfo",
+    "missing_input_fdf",
+]
+
+
+@set_module("sisl.io.siesta")
+class MissingFDFSiestaError(MissingInputSileError):
+    pass
+
+
+@set_module("sisl.io.siesta")
+class MissingFDFSiestaInfo(MissingInputSileInfo):
+    pass
+
+
+@set_module("sisl.io.siesta")
+def missing_input_fdf(
+    inputs, executable: str = "siesta", when_exception: Exception = KeyError
+):
+    return missing_input(executable, inputs, MissingFDFSiestaError, when_exception)
 
 
 @set_module("sisl.io.siesta")

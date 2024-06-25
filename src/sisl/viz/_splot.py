@@ -1,6 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 """
 Easy plotting from the command line.
 
@@ -238,15 +240,17 @@ def splot():
         # Extra configuration that the user requested for the display
         config = {
             "editable": args.editable,
-            "modeBarButtonsToAdd": [
-                "drawline",
-                "drawopenpath",
-                "drawclosedpath",
-                "drawcircle",
-                "drawrect",
-                "eraseshape",
-            ]
-            if args.drawable
-            else [],
+            "modeBarButtonsToAdd": (
+                [
+                    "drawline",
+                    "drawopenpath",
+                    "drawclosedpath",
+                    "drawcircle",
+                    "drawrect",
+                    "eraseshape",
+                ]
+                if args.drawable
+                else []
+            ),
         }
         plot.show(config=config)

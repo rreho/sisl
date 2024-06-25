@@ -1,6 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 from abc import abstractmethod
 from dataclasses import copy, dataclass, fields
 
@@ -15,12 +17,12 @@ __all__ = ["composite_geometry", "CompositeGeometrySection", "GeometrySection"]
 @dataclass
 class CompositeGeometrySection:
     @abstractmethod
-    def build_section(self, previous: Geometry) -> Geometry:
-        ...
+    def build_section(self, previous: Geometry) -> Geometry: ...
 
     @abstractmethod
-    def add_section(self, geometry: Geometry, geometry_addition: Geometry) -> Geometry:
-        ...
+    def add_section(
+        self, geometry: Geometry, geometry_addition: Geometry
+    ) -> Geometry: ...
 
     def _junction_error(self, prev, msg, what):
         """Helper function to raise an error if the junction is not valid.

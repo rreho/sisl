@@ -1,6 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import numpy as np
 
 import sisl as si
@@ -17,7 +19,7 @@ class GrapheneHamiltonian(GrapheneModel):
 
 
 class SimpleDispatch(ReferenceDispatch):
-    """This implements the simple nearest neighbour TB model"""
+    """This implements the simple nearest neighbor TB model"""
 
     def dispatch(self, t=-2.7, a=1.42, orthogonal=False):
         # Define the graphene lattice
@@ -99,6 +101,7 @@ class Ishii2010Dispatch(ReferenceDispatch):
     Instead of using the :math:`\lambda_0` as parameter name, we use ``t`` for the
     coupling strength.
     """
+
     doi = "10.1103/PhysRevLett.104.116801"
 
     def dispatch(self, t=-2.7, a=1.42, orthogonal=False):

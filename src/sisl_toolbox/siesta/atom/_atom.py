@@ -1,6 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 r""" Atom input/output writer
 
 Developer: Nick Papior
@@ -23,11 +25,15 @@ which will show 4 plots for different sections. A command-line tool is also
 made available through the `stoolbox`.
 """
 import sys
-from collections.abc import Iterable
 from functools import reduce
 from pathlib import Path
 
 import numpy as np
+
+try:
+    from scipy.integrate import trapezoid
+except ImportError:
+    from scipy.integrate import trapz as trapezoid
 from scipy.interpolate import interp1d
 
 import sisl as si
@@ -342,7 +348,7 @@ class AtomInput:
         # get default options for pseudo
         opts = NotNonePropertyDict()
         pseudo = dic["pseudo"]
-        opts["logr"] = parse_variable(pseudo.get("log-radii"), unit="Ang").value
+        opts["logr"] = parse_variable(pseudo.get("log-radius"), unit="Ang").value
         opts["rcore"] = parse_variable(pseudo.get("core-correction"), unit="Ang").value
         opts["xc"] = pseudo.get("xc")
         opts["equation"] = pseudo.get("equation")
@@ -675,10 +681,10 @@ class AtomInput:
                 # dr = ae_r[1] - ae_r[0]
 
                 # Integrate number of core-electrons and valence electrons
-                core_c = np.trapz(ae_cc, ae_r)
-                valence_c = np.trapz(ps_vc, ps_r)
+                core_c = trapezoid(ae_cc, ae_r)
+                valence_c = trapezoid(ps_vc, ps_r)
                 print(f"Total charge in atom: {core_c + valence_c:.5f}")
-                overlap_c = np.trapz(np.minimum(ae_cc, ps_vc), ae_r)
+                overlap_c = trapezoid(np.minimum(ae_cc, ps_vc), ae_r)
                 ax.set_title(f"Charge: int(min(AE_cc, PS_vc)) = {overlap_c:.3f} e")
 
                 # We will try and *guess-stimate* a good position for rc for core-corrections
@@ -838,6 +844,12 @@ def atom_plot_cli(subp=None):
         p.set_defaults(runner=atom_plot)
     else:
         atom_plot(p.parse_args())
+
+
+# Import object holding all the CLI
+from sisl_toolbox.cli import register_toolbox_cli
+
+register_toolbox_cli(atom_plot_cli)
 
 
 def atom_plot(args):

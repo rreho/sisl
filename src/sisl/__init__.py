@@ -2,6 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 # isort: skip_file
+from __future__ import annotations
+
 """
 sisl
 ====
@@ -39,7 +41,6 @@ Advanced classes
    SparseCSR
    SparseAtom
    SparseOrbital
-   Selector
 
 """
 import logging
@@ -69,19 +70,22 @@ __bibtex__ = f"""# BibTeX information if people wish to cite
 # do not expose this helper package
 del _version, year, datetime
 
-import sisl._environ as _environ
+from sisl._environ import get_environ_variable
+
+# Immediately check if the file is logable
+log_file = get_environ_variable("SISL_LOG_FILE")
+if not log_file.is_dir():
+    # Create the logging
+    log_lvl = get_environ_variable("SISL_LOG_LEVEL")
+
+    # Start the logging to the file
+    logging.basicConfig(filename=str(log_file), level=getattr(logging, log_lvl))
+    del log_lvl
+del log_file
+
 
 # import the common options used
 from ._common import *
-
-# Import the Selector
-from .selector import *
-
-# Import oplist
-from .oplist import oplist
-
-# Import plot routine
-from ._plot import plot as plot
 
 # Import warning classes
 # We currently do not import warn and info
@@ -94,36 +98,27 @@ from .messages import SislDeprecation
 # The unit contain the SI standard conversions using
 # all digits (not program specific)
 from .unit import unit_group, unit_convert, unit_default, units
-import sisl.unit as unit
+from . import unit
 
 # Import numerical constants (they required unit)
-import sisl.constant as constant
+from . import constant
 
 # To make it easier to type ;)
 C = constant
 
 # Specific linear algebra
-import sisl.linalg as linalg
+from . import linalg
 
 # Utilities
-import sisl.utils as utils
+from . import utils
 
 # Mixing
-import sisl.mixing as mixing
+from . import mixing
 
 # Below are sisl-specific imports
-from .quaternion import *
 from .shape import *
 
-from .lattice import *
-from .atom import *
-
-from .orbital import *
-from .geometry import *
-from .grid import *
-
-from .sparse import *
-from .sparse_geometry import *
+from ._core import *
 
 # Physical quantities and required classes
 from .physics import *
@@ -137,7 +132,7 @@ from .physics import *
 #  sisl.get_sile
 # This will reduce the cluttering of the separate entities
 # that sisl is made of.
-import sisl.io as io
+from . import io
 from .io.sile import (
     add_sile,
     get_sile_class,
@@ -169,10 +164,34 @@ Lattice.to.register("Sile", Lattice.to._dispatchs[str])
 # This enables:
 # import sisl
 # sisl.geom.graphene
-import sisl.geom as geom
+from . import geom
 
-if _environ.get_environ_variable("SISL_VIZ_AUTOLOAD"):
-    from . import viz
+from ._nodify import on_nodify as __nodify__
+
+# Set all the placeholders for the plot attribute
+# of sisl classes
+from ._lazy_viz import set_viz_placeholders
+
+set_viz_placeholders()
+
+# If someone tries to get the viz attribute, we will load the viz module
+_LOADED_VIZ = False
+
+
+def __getattr__(name):
+    global _LOADED_VIZ
+    if name == "viz" and not _LOADED_VIZ:
+        _LOADED_VIZ = True
+        import sisl.viz
+
+        return sisl.viz
+    raise AttributeError(f"module {__name__} has no attribute {name}")
+
+
+from ._ufuncs import expose_registered_methods
+
+expose_registered_methods("sisl")
+del expose_registered_methods
 
 # Make these things publicly available
 __all__ = [s for s in dir() if not s.startswith("_")]

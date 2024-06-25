@@ -24,7 +24,7 @@ One may also plot real-space wavefunctions.
    conductivity
    wavefunction
    spin_moment
-   spin_squared
+   spin_contamination
 
 
 Supporting classes
@@ -37,6 +37,12 @@ For instance, the PDOS method requires the overlap matrix in non-orthogonal
 basis sets at the :math:`k`-point corresponding to the eigenstates. Hence, the
 argument ``S`` must be :math:`\mathbf S(\mathbf k)`. The `EigenstateElectron` class
 automatically passes the correct ``S`` because it knows the states :math:`k`-point.
+
+.. autosummary::
+   :toctree: generated/
+   :hidden:
+
+   _electron_State
 
 .. autosummary::
    :toctree: generated/

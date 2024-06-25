@@ -1,34 +1,62 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Union
+from typing import TYPE_CHECKING, Any, Callable, Sequence, Union
 
 import numpy as np
+import scipy.sparse as sps
 
-import sisl._typing_ext.numpy as npt
-from sisl import Atom, Atoms, BaseSile, Geometry, Lattice, Shape
-from sisl._category import GenericCategory
-from sisl._typing import *
-from sisl.geom.category import AtomCategory
+from . import _numpy as npt
 
-# An atoms like argument that may be parsed by Geometry._sanitize_atoms
-AtomsArgument = Union[
-    npt.NDArray[Union[np.int_, np.bool_]],
-    str,
-    int,
-    dict,
-    Atom,
-    AtomCategory,
-    GenericCategory,
-    Shape,
+# To prevent import cycles place any internal imports in the branch below
+# and use a string literal forward reference to it in subsequent types
+# https://mypy.readthedocs.io/en/latest/common_issues.html#import-cycles
+if TYPE_CHECKING:
+    from sisl import BaseSile, Geometry, Grid, Lattice, Shape
+    from sisl._category import GenericCategory
+    from sisl.geom.category import AtomCategory
+
+__all__ = [
+    "Coord",
+    "CoordOrScalar",
+    "FuncType",
+    "KPoint",
+    "LatticeOrGeometry",
+    "SeqFloat",
+    "SeqOrScalarFloat",
+    "SparseMatrix",
+    "SparseMatrixExt",
 ]
 
-OrbitalsArgument = Union[
-    npt.NDArray[Union[np.int_, np.bool_]],
-    str,
-    int,
-    dict,
-    AtomCategory,
-    Shape,
+
+SeqFloat = Sequence[float]
+SeqOrScalarFloat = Union[float, SeqFloat]
+
+Coord = SeqFloat
+CoordOrScalar = Union[float, Coord]
+
+KPoint = Sequence[float]
+
+# Short for *any* function
+FuncType = Callable[..., Any]
+
+LatticeOrGeometry = Union[
+    "Lattice",
+    "Geometry",
+]
+
+if hasattr(sps, "sparray"):
+    SparseMatrixExt = Union[
+        sps.spmatrix,
+        sps.sparray,
+    ]
+else:
+    SparseMatrixExt = Union[sps.spmatrix,]
+
+SparseMatrix = Union[
+    SparseMatrixExt,
+    "SparseCSR",
 ]

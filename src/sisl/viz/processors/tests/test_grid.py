@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -354,6 +359,10 @@ def test_get_isos(grid, skewed):
 
     if skewed:
         return
+
+    # we cast to the real value, to bypass scikit-images problems
+    # scikit-image only allows float data-types
+    grid.grid = grid.grid.real
 
     # Test isocontours (2D)
     arr = grid_to_dataarray(grid.average(2), ["x", "y"], [0, 1, 2], nsc=(1, 1, 1))

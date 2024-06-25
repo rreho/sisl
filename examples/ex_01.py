@@ -7,6 +7,8 @@
 # for graphene with on-site energy 0, and hopping energy
 # -2.7 eV.
 
+from __future__ import annotations
+
 import sisl
 
 bond = 1.42
@@ -24,7 +26,7 @@ for ia in gr:
     idx_a = gr.close(ia, R)
     # On-site
     H[ia, idx_a[0]] = 0.0
-    # Nearest neighbour hopping
+    # Nearest neighbor hopping
     H[ia, idx_a[1]] = -2.7
 
 # Calculate eigenvalues at K-point

@@ -1,6 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 from numbers import Integral
 
 try:
@@ -10,6 +12,7 @@ except Exception:
 
 import itertools
 from functools import reduce
+from typing import List, Optional, Union
 
 import numpy as np
 
@@ -20,12 +23,12 @@ from scipy.sparse import SparseEfficiencyWarning, csr_matrix, issparse
 
 import sisl._array as _a
 from sisl import Atoms, Geometry, constant
+from sisl._core.sparse import _ncol_to_indptr
 from sisl._help import wrap_filterwarnings
 from sisl._internal import set_module
 from sisl.messages import SislError, deprecate, deprecate_argument, info, warn
 from sisl.physics.densitymatrix import DensityMatrix
 from sisl.physics.distribution import fermi_dirac
-from sisl.sparse import _ncol_to_indptr
 from sisl.unit.siesta import unit_convert
 
 # Import sile objects
@@ -41,6 +44,7 @@ from sisl.utils import (
 
 from ..sile import add_sile, get_sile, sile_raise_write
 from ._cdf import _devncSileTBtrans
+from .sile import missing_input_fdf
 
 __all__ = ["tbtncSileTBtrans", "tbtavncSileTBtrans"]
 
@@ -111,10 +115,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
     are in fortran indexing (1-based), everything is returned as Python indexing (0-based)
     when using Python scripts.
 
-    In the following equations we will use this notation:
-
-    * :math:`\alpha` and :math:`\beta` are atomic indices
-    * :math:`\nu` and :math:`\mu` are orbital indices
+    The notation described in `math_convention`_ will be used.
 
     A word on DOS normalization:
 
@@ -128,6 +129,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
     The API for this class are largely equivalent to the arguments of the `sdata` command-line
     tool, with the execption that the command-line tool uses Fortran indexing numbers (1-based).
     """
+
     _trans_type = "TBT"
     _E2eV = Ry2eV
 
@@ -150,37 +152,36 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         f = kwargs.get("file", f)
         tbtavncSileTBtrans(f, mode="w", access=0).write_tbtav(self)
 
-    def _value_avg(self, name, tree=None, kavg=False):
+    def _value_avg(
+        self,
+        name: str,
+        tree: Optional[Union[str, List[str]]] = None,
+        kavg: bool = False,
+    ):
         """Local method for obtaining the data from the SileCDF.
 
-        This method checks how the file is access, i.e. whether
+        This method checks how the file is accessed, i.e. whether
         data is stored in the object or it should be read consequtively.
+
+        Parameters
+        ----------
+        name: str
+            name of the variable (located in `tree`)
+        tree: str or list of str, optional
+            the group location of the variable
+        kavg: bool, optional
+            whether to k-average the quantity
         """
         if self._access > 0:
             if name in self._data:
                 return self._data[name]
 
-        try:
-            v = self._variable(name, tree=tree)
-        except KeyError as err:
-            group = None
-            if isinstance(tree, list):
-                group = ".".join(tree)
-            elif not tree is None:
-                group = tree
-            if not group is None:
-                raise KeyError(
-                    f"{self.__class__.__name__} could not retrieve key '{group}.{name}' due to missing flags in the input file."
-                )
-            raise KeyError(
-                f"{self.__class__.__name__} could not retrieve key '{name}' due to missing flags in the input file."
-            )
+        v = self._variable(name, tree=tree)
 
         if self._k_avg:
             return v[:]
 
         # Perform normalization
-        orig_shape = v.shape
         if isinstance(kavg, bool):
             if kavg:
                 wkpt = self.wk
@@ -188,13 +189,11 @@ class tbtncSileTBtrans(_devncSileTBtrans):
                 data = v[0, ...] * wkpt[0]
                 for i in range(1, nk):
                     data += v[i, :] * wkpt[i]
-                data.shape = orig_shape[1:]
             else:
                 data = v[:]
 
         elif isinstance(kavg, Integral):
             data = v[kavg, ...]
-            data.shape = orig_shape[1:]
 
         else:
             raise ValueError(
@@ -204,50 +203,54 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         # Return data
         return data
 
-    def _value_E(self, name, tree=None, kavg=False, E=None):
-        """Local method for obtaining the data from the SileCDF using an E index."""
+    def _value_E(
+        self,
+        name: str,
+        tree: Optional[Union[str, List[str]]] = None,
+        kavg: bool = False,
+        E: Optional[Union[int, float]] = None,
+    ):
+        """Local method for obtaining energy resolved data from the SileCDF.
+
+        This method checks how the file is accessed, i.e. whether
+        data is stored in the object or it should be read consequtively.
+
+        Parameters
+        ----------
+        name: str
+            name of the variable (located in `tree`)
+        tree: str or list of str, optional
+            the group location of the variable
+        kavg: bool, optional
+            whether to k-average the quantity
+        E: int or float, optional
+            if provided, only extract the quantity based on the energy `E`.
+        """
         if E is None:
             return self._value_avg(name, tree, kavg)
 
         # Ensure that it is an index
         iE = self.Eindex(E)
 
-        try:
-            v = self._variable(name, tree=tree)
-        except KeyError:
-            group = None
-            if isinstance(tree, list):
-                group = ".".join(tree)
-            elif not tree is None:
-                group = tree
-            if not group is None:
-                raise KeyError(
-                    f"{self.__class__.__name__} could not retrieve key '{group}.{name}' due to missing flags in the input file."
-                )
-            raise KeyError(
-                f"{self.__class__.__name__} could not retrieve key '{name}' due to missing flags in the input file."
-            )
+        v = self._variable(name, tree=tree)
+
         if self._k_avg:
             return v[iE, ...]
 
         wkpt = self.wk
 
         # Perform normalization
-        orig_shape = v.shape
-
         if isinstance(kavg, bool):
             if kavg:
                 nk = len(wkpt)
                 data = np.array(v[0, iE, ...]) * wkpt[0]
                 for i in range(1, nk):
                     data += v[i, iE, ...] * wkpt[i]
-                data.shape = orig_shape[2:]
             else:
-                data = np.array(v[:, iE, ...])
+                data = v[:, iE, ...]
 
         elif isinstance(kavg, Integral):
-            data = np.array(v[kavg, iE, ...])
-            data.shape = orig_shape[2:]
+            data = v[kavg, iE, ...]
 
         else:
             raise ValueError(
@@ -257,6 +260,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         # Return data
         return data
 
+    @missing_input_fdf([("TBT.T.All", "True")])
     def transmission(self, elec_from=0, elec_to=1, kavg=True) -> ndarray:
         r"""Transmission from `elec_from` to `elec_to`.
 
@@ -296,6 +300,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
 
         return self._value_avg(f"{elec_to}.T", elec_from, kavg=kavg)
 
+    @missing_input_fdf([("TBT.T.Out", "True"), ("TBT.T.All", "True")])
     def reflection(self, elec=0, kavg=True, from_single=False) -> ndarray:
         r"""Reflection into electrode `elec`
 
@@ -350,6 +355,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
 
         return BT - T
 
+    @missing_input_fdf([("TBT.T.Eig", "<int>")])
     def transmission_eig(self, elec_from=0, elec_to=1, kavg=True) -> ndarray:
         """Transmission eigenvalues from `elec_from` to `elec_to`.
 
@@ -377,6 +383,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
 
         return self._value_avg(f"{elec_to}.T.Eig", elec_from, kavg=kavg)
 
+    @missing_input_fdf([("TBT.T.Bulk", "True")])
     def transmission_bulk(self, elec=0, kavg=True) -> ndarray:
         """Bulk transmission for the `elec` electrode
 
@@ -584,6 +591,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
 
         return nDOS
 
+    @missing_input_fdf([("TBT.DOS.Gf", "True")])
     def DOS(
         self, E=None, kavg=True, atoms=None, orbitals=None, sum=True, norm="none"
     ) -> ndarray:
@@ -593,7 +601,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
 
         .. math::
 
-           \mathrm{DOS}(E) = -\frac{1}{\pi N} \sum_{\nu\in \mathrm{atom}/\mathrm{orbital}} \Im \mathbf{G}_{\nu\nu}(E)
+           \mathrm{DOS}(E) = -\frac{1}{\pi N} \sum_{i\in \{I\}} \Im \mathbf{G}_{ii}(E)
 
         The normalization constant (:math:`N`) is defined in the routine `norm` and depends on the
         arguments.
@@ -628,6 +636,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
             * eV2Ry
         )
 
+    @missing_input_fdf([("TBT.DOS.A", "True")])
     def ADOS(
         self,
         elec=0,
@@ -643,7 +652,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         Extract the spectral DOS from electrode `elec` on a selected subset of atoms/orbitals in the device region
 
         .. math::
-           \mathrm{ADOS}_\mathfrak{el}(E) = \frac{1}{2\pi N} \sum_{\nu\in \mathrm{atom}/\mathrm{orbital}} [\mathbf{G}(E)\Gamma_\mathfrak{el}\mathbf{G}^\dagger]_{\nu\nu}(E)
+           \mathrm{ADOS}_\mathfrak{el}(E) = \frac{1}{2\pi N} \sum_{i\in\{I\}} [\mathbf{G}(E)\Gamma_\mathfrak{el}\mathbf{G}^\dagger]_{ii}(E)
 
         The normalization constant (:math:`N`) is defined in the routine `norm` and depends on the
         arguments.
@@ -683,6 +692,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
             * eV2Ry
         )
 
+    @missing_input_fdf([("TBT.DOS.Elecs", "True")])
     def BDOS(self, elec=0, E=None, kavg=True, sum=True, norm="none") -> ndarray:
         r"""Bulk density of states (DOS) (1/eV).
 
@@ -830,12 +840,12 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         ).sum()
         return I * constant.q / constant.h("eV s")
 
-    def _check_Teig(self, func_name, TE, eps=0.001):
+    def _check_Teig(self, func_name, TE, atol: float = 0.001):
         """Internal method to check whether all transmission eigenvalues are present"""
-        if np.any(np.logical_and.reduce(TE > eps, axis=-1)):
+        if np.any(np.logical_and.reduce(TE > atol, axis=-1)):
             info(
                 f"{self.__class__.__name__}.{func_name} does possibly not have all relevant transmission eigenvalues in the "
-                "calculation. For some energy values all transmission eigenvalues are above {eps}!"
+                "calculation. For some energy values all transmission eigenvalues are above {atol}!"
             )
 
     def shot_noise(self, elec_from=0, elec_to=1, classical=False, kavg=True) -> ndarray:
@@ -919,8 +929,9 @@ class tbtncSileTBtrans(_devncSileTBtrans):
 
         .. math::
            S(V) = \frac{2e^2}{h}\sum_k\sum_n \int\mathrm d E
-                  \big\{T_{k,n}(E)[f_L(1-f_L)+f_R(1-f_R)] +
-                        T_{k,n}(E)[1 - T_{k,n}(E)](f_L - f_R)^2\big\} w_k
+                  \big\{&T_{k,n}(E)[f_L(1-f_L)+f_R(1-f_R)] +
+           \\
+                        &T_{k,n}(E)[1 - T_{k,n}(E)](f_L - f_R)^2\big\} w_k
 
         Where :math:`f_i` are the Fermi-Dirac distributions for the electrodes.
 
@@ -964,16 +975,16 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         # Note that h in eV units will cancel the units in the dE integration
         noise_const = 2 * constant.q**2 / constant.h("eV s")
 
+        def noise(T, eq, neq):
+            return (T.sum(-1) * eq).sum(-1) + ((T * (1 - T)).sum(-1) * neq).sum(-1)
+
         # Determine the k-average
         if isinstance(kavg, bool):
             if not kavg:
                 # The user wants it k-resolved
                 T = self.transmission_eig(elec_from, elec_to, kavg=False)
                 self._check_Teig("noise_power", T)
-                return noise_const * (
-                    (T.sum(-1) * eq_fac).sum(-1)
-                    + ((T * (1 - T)).sum(-1) * neq_fac).sum(-1)
-                )
+                return noise_const * noise(T, eq_fac, neq_fac)
 
             # We need to manually weigh the k-points
             wkpt = self.wkpt
@@ -981,23 +992,16 @@ class tbtncSileTBtrans(_devncSileTBtrans):
             T = self.transmission_eig(elec_from, elec_to, kavg=0)
             self._check_Teig("noise_power", T)
             # Separate the calculation into two terms (see Ya.M. Blanter, M. Buttiker, Physics Reports 336 2000)
-            np = (
-                (T.sum(-1) * eq_fac).sum(-1) + ((T * (1 - T)).sum(-1) * neq_fac).sum(-1)
-            ) * wkpt[0]
+            np = noise(T, eq_fac, neq_fac) * wkpt[0]
             for ik in range(1, self.nkpt):
                 T = self.transmission_eig(elec_from, elec_to, kavg=ik)
                 self._check_Teig("noise_power", T)
-                np += (
-                    (T.sum(-1) * eq_fac).sum(-1)
-                    + ((T * (1 - T)).sum(-1) * neq_fac).sum(-1)
-                ) * wkpt[ik]
+                np += noise(T, eq_fac, neq_fac) * wkpt[ik]
 
         else:
             T = self.transmission_eig(elec_from, elec_to, kavg=kavg)
             self._check_Teig("noise_power", T)
-            np = (T.sum(-1) * eq_fac).sum(-1) + ((T * (1 - T)).sum(-1) * neq_fac).sum(
-                -1
-            )
+            np = noise(T, eq_fac, neq_fac)
 
         # Do final conversion
         return noise_const * np
@@ -1010,7 +1014,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         .. math::
            F(E) &= \frac{\sum_{k,n} T_{k,n}(E)[1 - T_{k,n}(E)] w_k}{\sum_{k,n} T_{k,n}(E) w_k}
            \\
-                &= S(E, V) / S_P(E, V)
+               &= S(E, V) / S_P(E, V)
 
         Notes
         -----
@@ -1117,7 +1121,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
 
             # now figure out all places where we
             # have the corresponding values
-            all_col = np.logical_and(np.in1d(row, all_col), np.in1d(col, all_col))
+            all_col = np.logical_and(np.isin(row, all_col), np.isin(col, all_col))
 
             # reduce space
             col = col[all_col]
@@ -1183,7 +1187,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
             row = np.repeat(row_nonzero, ncol[row_nonzero])
 
             # Create a logical array for sub-indexing
-            all_col = np.in1d(col, all_col)
+            all_col = np.isin(col, all_col)
             row = row[all_col]
             col = col[all_col]
 
@@ -1225,7 +1229,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
            whether the returned data are only in the unit-cell.
            If ``True`` this will return a sparse matrix of ``shape = (self.na, self.na)``,
            else, it will return a sparse matrix of ``shape = (self.na, self.na * self.n_s)``.
-           One may figure out the connections via `~sisl.geometry.Geometry.sc_index`.
+           One may figure out the connections via `~sisl._core.geometry.Geometry.sc_index`.
         sum_dup : bool, optional
            duplicates will be summed if this is true, in this case, no duplicates are
            present in the returned sparse matrix. If false, duplicates may exist for
@@ -1355,7 +1359,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
            whether the returned data are only in the unit-cell.
            If ``True`` this will return a sparse matrix of ``shape = (self.na, self.na)``,
            else, it will return a sparse matrix of ``shape = (self.na, self.na * self.n_s)``.
-           One may figure out the connections via `~sisl.geometry.Geometry.sc_index`.
+           One may figure out the connections via `~sisl._core.geometry.Geometry.sc_index`.
         sum_dup : bool, optional
            duplicates will be summed if this is true, in this case, no duplicates are
            present in the returned sparse matrix. If false, duplicates may exist for
@@ -1372,17 +1376,17 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         any physical quantity that the sparse matrix may represent but is merely a number that provides an
         idea of *how much* this atom is governing the data in the matrix.
 
-        The atomic contributionmay have two meanings based on these two equations
+        The atomic contribution may have two meanings based on these two equations
 
         .. math::
-            A_\alpha^{|a|} &=\frac{1}{2} \sum_\beta \Big| \sum_{\nu\in \alpha}\sum_{\mu\in \beta} A_{\nu\mu} \Big|
+            \mathbf a_I^{|a|} &=\frac 12 \sum_{\{J\}} \Big| \sum_{i\in I}\sum_{j\in J} \mathbf A_{ij} \Big|
             \\
-            A_\alpha^{|o|} &=\frac{1}{2} \sum_\beta \sum_{\nu\in \alpha}\sum_{\mu\in \beta} \big| A_{\nu\mu} \big|
+            \mathbf a_I^{|o|} &=\frac 12 \sum_{i\in I}\sum_{j\in\{J\}} \big| A_{ij} \big|
 
         If the *activity* is requested (``activity=True``)
-        :math:`A_\alpha^{\mathcal A} = \sqrt{ A_\alpha^{|a|} A_\alpha^{|o|} }` is returned.
+        :math:`\mathbf a_I^{\mathcal A} = \sqrt{\mathbf a_I^{|a|} \mathbf a_I^{|o|} }` is returned.
 
-        If ``activity=False`` :math:`A_\alpha^{|a|}` is returned.
+        If ``activity=False`` :math:`\mathbf a_I^{|a|}` is returned.
 
         For geometries with all atoms only having 1-orbital, they are equivalent.
 
@@ -1429,8 +1433,10 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         "only",
         "what",
         "argument only has been deprecated in favor of what, please update your code.",
-        "0.14.0",
+        "0.14",
+        "0.16",
     )
+    @missing_input_fdf([("TBT.T.Orbital", "True"), ("TBT.Current.Orb", "True")])
     def orbital_transmission(
         self, E, elec=0, kavg=True, isc=None, what: str = "all", orbitals=None
     ) -> csr_matrix:
@@ -1448,12 +1454,12 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         The orbital transmissions are calculated as described in the TBtrans manual:
 
         .. math::
-            T_{\mu \nu}(E) = i [
-            (\mathbf H_{\nu\mu} - E\mathbf S_{\nu\mu}) \mathbf A_{\mu\nu}(E)
+            T_{ij}(E) = i [
+            (\mathbf H_{ji} - E\mathbf S_{ji}) \mathbf A_{ij}(E)
             -
-            (\mathbf H_{\mu\nu} - E\mathbf S_{\mu\nu}) \mathbf A_{\nu\mu}(E)],
+            (\mathbf H_{ij} - E\mathbf S_{ij}) \mathbf A_{ji}(E)],
 
-        It is easy to show that the above matrix obeys :math:`T_{\mu\nu}=-T_{\nu\mu}`.
+        It is easy to show that the above matrix obeys :math:`T_{ij}=-T_{ji}`.
 
         For inexperienced users it is adviced to try out all three values of ``what`` to ensure
         the correct physics is obtained.
@@ -1534,8 +1540,10 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         "only",
         "what",
         "argument only has been deprecated in favor of what, please update your code.",
-        "0.14.0",
+        "0.14",
+        "0.16",
     )
+    @missing_input_fdf([("TBT.T.Orbital", "True"), ("TBT.Current.Orb", "True")])
     def orbital_current(
         self,
         elec=0,
@@ -1551,9 +1559,9 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         represents how the current is flowing at an applied bias from a given electrode.
 
         .. math::
-            J_{\mu\nu} = \frac eh\int_{\mu_1}^{\mu_2} \!\mathrm dE\, T_{\mu\nu} [n_F(\mu_2, k_B T_2) - n_F(\mu_1, k_B T_1)]
+            J_{ij} = \frac eh\int_{\mu_1}^{\mu_2} \!\mathrm dE\, T_{ij} [n_F(\mu_2, k_B T_2) - n_F(\mu_1, k_B T_1)]
 
-        with :math:`T_i` being the electronic temperature of the respective reservoir.
+        with :math:`T_{\langle\rangle}` being the electronic temperature of the respective reservoir.
 
         Parameters
         ----------
@@ -1647,7 +1655,8 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         "only",
         "what",
         "argument only has been deprecated in favor of what, please update your code.",
-        "0.14.0",
+        "0.14",
+        "0.16",
     )
     def bond_transmission(
         self, E, elec=0, kavg=True, isc=None, what: str = "all", orbitals=None, uc=False
@@ -1659,7 +1668,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         The bond transmissions are a sum over all orbital transmissions
 
         .. math::
-           T_{\alpha\beta}(E) = \sum_{\nu\in\alpha}\sum_{\mu\in\beta} T_{\nu\mu}(E)
+           T_{IJ}(E) = \sum_{i\in I}\sum_{j\in J} T_{ij}(E)
 
         Parameters
         ----------
@@ -1687,7 +1696,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
            whether the returned transmissions are only in the unit-cell (supercell bonds will be folded to their unit-cell equivalents).
            If `True` this will return a sparse matrix of ``shape = (self.na, self.na)``,
            else, it will return a sparse matrix of ``shape = (self.na, self.na * self.n_s)``.
-           One may figure out the connections via `~sisl.geometry.Geometry.sc_index`.
+           One may figure out the connections via `~sisl._core.geometry.Geometry.sc_index`.
 
         Examples
         --------
@@ -1717,7 +1726,8 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         "only",
         "what",
         "argument only has been deprecated in favor of what, please update your code.",
-        "0.14.0",
+        "0.14",
+        "0.16",
     )
     def bond_current(
         self,
@@ -1736,7 +1746,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         The bond currents are a sum over all orbital currents:
 
         .. math::
-           J_{\alpha\beta} = \sum_{\nu\in\alpha}\sum_{\mu\in\beta} J_{\nu\mu}
+           J_{IJ} = \sum_{i\in I}\sum_{j\in J} J_{ij}
 
         Parameters
         ----------
@@ -1764,7 +1774,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
            will be folded to their unit-cell equivalents).
            If `True` this will return a sparse matrix of ``shape = (self.na, self.na)``,
            else, it will return a sparse matrix of ``shape = (self.na, self.na * self.n_s)``.
-           One may figure out the connections via `~sisl.geometry.Geometry.sc_index`.
+           One may figure out the connections via `~sisl._core.geometry.Geometry.sc_index`.
 
         Examples
         --------
@@ -1802,7 +1812,8 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         "only",
         "what",
         "argument only has been deprecated in favor of what, please update your code.",
-        "0.14.0",
+        "0.14",
+        "0.16",
     )
     def vector_transmission(
         self, E, elec=0, kavg=True, isc=None, what="all", orbitals=None
@@ -1812,10 +1823,10 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         The vector transmission is defined as:
 
         .. math::
-              \mathbf T_\alpha = \sum_\beta \frac{r_\beta - r_\alpha}{|r_\beta - r_\alpha|} \cdot T_{\alpha\beta}
+              \mathbf T_I = \sum_J \frac{\mathbf r^{(J)} - \mathbf r^{(I)}}{|\mathbf r^{(J)} - \mathbf r^{(I)}|} \cdot T_{IJ}
 
-        Where :math:`T_{\alpha\beta}` is the bond transmission between atom :math:`\alpha` and :math:`\beta` and
-        :math:`r_\alpha` are the atomic coordinates.
+        Where :math:`T_{IJ}` is the bond transmission between atom :math:`I` and :math:`J` and
+        :math:`\mathbf r^{(\langle\rangle)}` are the atomic coordinates.
 
         Parameters
         ----------
@@ -1875,7 +1886,8 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         "only",
         "what",
         "argument only has been deprecated in favor of what, please update your code.",
-        "0.14.0",
+        "0.14",
+        "0.16",
     )
     def vector_current(
         self,
@@ -1891,10 +1903,10 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         The vector current is defined as:
 
         .. math::
-              \mathbf J_\alpha = \sum_\beta \frac{r_\beta - r_\alpha}{|r_\beta - r_\alpha|} \cdot J_{\alpha\beta}
+              \mathbf J_I = \sum_J \frac{\mathbf r^{(J)} - \mathbf r^{(I)}}{|\mathbf r^{(J)} - \mathbf r^{(I)}|} \cdot J_{IJ}
 
-        Where :math:`J_{\alpha\beta}` is the bond current between atom :math:`\alpha` and :math:`\beta` and
-        :math:`r_\alpha` are the atomic coordinates.
+        Where :math:`J_{IJ}` is the bond current between atom :math:`I` and :math:`J` and
+        :math:`\mathbf r^{(\langle\rangle)}` are the atomic coordinates.
 
         Parameters
         ----------
@@ -1969,14 +1981,16 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         The atomic transmission may have two meanings based on these two equations
 
         .. math::
-            T_\alpha^{|a|} &=\frac{1}{2} \sum_\beta \Big| \sum_{\nu\in \alpha}\sum_{\mu\in \beta} T_{\nu\mu} \Big|
+            T_I^{|a|} &=\frac 12 \sum_{\{J\}} \Big| \sum_{i\in I}\sum_{j\in J} \mathbf T_{ij} \Big|
             \\
-            T_\alpha^{|o|} &=\frac{1}{2} \sum_\beta \sum_{\nu\in \alpha}\sum_{\mu\in \beta} \big| T_{\nu\mu} \big|
+            T_I^{|o|} &=\frac 12 \sum_{i\in I}\sum_{j\in\{J\}} \big| T_{ij} \big|
+        .. math::
 
+        If the *activity* is requested (``activity=True``)
+        :math:`T_I^{\mathcal A} = \sqrt{T_I^{|a|} T_I^{|o|} }` is returned.
         If the *activity* current is requested (``activity=True``)
-        :math:`T_\alpha^{\mathcal A} = \sqrt{ T_\alpha^{|a|} T_\alpha^{|o|} }` is returned.
 
-        If ``activity=False`` :math:`T_\alpha^{|a|}` is returned.
+        If ``activity=False`` :math:`T_I^{|a|}` is returned.
 
         For geometries with all atoms only having 1-orbital, they are equivalent.
 
@@ -2041,14 +2055,15 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         The atomic current may have two meanings based on these two equations
 
         .. math::
-            J_\alpha^{|a|} &=\frac{1}{2} \sum_\beta \Big| \sum_{\nu\in \alpha}\sum_{\mu\in \beta} J_{\nu\mu} \Big|
+            \mathbf j_I^{|a|} &=\frac 12 \sum_{\{J\}} \Big| \sum_{i\in I}\sum_{j\in J} \mathbf J_{ij} \Big|
             \\
-            J_\alpha^{|o|} &=\frac{1}{2} \sum_\beta \sum_{\nu\in \alpha}\sum_{\mu\in \beta} \big| J_{\nu\mu} \big|
+            \mathbf j_I^{|o|} &=\frac 12 \sum_{i\in I}\sum_{j\in\{J\}} \big| J_{ij} \big|
+        .. math::
 
-        If the *activity* current is requested (``activity=True``)
-        :math:`J_\alpha^{\mathcal A} = \sqrt{ J_\alpha^{|a|} J_\alpha^{|o|} }` is returned.
+        If the *activity* is requested (``activity=True``)
+        :math:`\mathbf j_I^{\mathcal A} = \sqrt{\mathbf j_I^{|a|} \mathbf j_I^{|o|} }` is returned.
 
-        If ``activity=False`` :math:`J_\alpha^{|a|}` is returned.
+        If ``activity=False`` :math:`\mathbf j_I^{|a|}` is returned.
 
         For geometries with all atoms only having 1-orbital, they are equivalent.
 
@@ -2106,6 +2121,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
 
         return self.sparse_orbital_to_scalar(Jij, activity=activity)
 
+    @missing_input_fdf([("TBT.DM.Gf", "True")])
     def density_matrix(
         self, E, kavg=True, isc=None, orbitals=None, geometry=None
     ) -> csr_matrix:
@@ -2117,7 +2133,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         routine. Basically the LDOS in real-space may be calculated as
 
         .. math::
-            \rho_{\mathbf G}(E, \mathbf r) = -\frac{1}{\pi}\sum_{\nu\mu}\phi_\nu(\mathbf r)\phi_\mu(\mathbf r) \Im[\mathbf G_{\nu\mu}(E)]
+            \boldsymbol\rho_{\mathbf G}(E, \mathbf r) = -\frac{1}{\pi}\sum_{ij}\phi_i(\mathbf r)\phi_j(\mathbf r) \Im[\mathbf G_{ij}(E)]
 
         where :math:`\phi` are the orbitals. Note that the broadening used in the TBtrans calculations
         ensures the broadening of the density, i.e. it should not be necessary to perform energy
@@ -2159,6 +2175,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
             None, E, kavg, isc, orbitals=orbitals, geometry=geometry
         )
 
+    @missing_input_fdf([("TBT.DM.A", "True")])
     def Adensity_matrix(
         self, elec, E, kavg=True, isc=None, orbitals=None, geometry=None
     ) -> csr_matrix:
@@ -2170,7 +2187,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         routine. Basically the LDOS in real-space may be calculated as
 
         .. math::
-            \rho_{\mathbf A_{\mathfrak{el}}}(E, \mathbf r) = \frac{1}{2\pi}\sum_{\nu\mu}\phi_\nu(\mathbf r)\phi_\mu(\mathbf r) \Re[\mathbf A_{\mathfrak{el}, \nu\mu}(E)]
+            \boldsymbol\rho_{\mathbf A_{\mathfrak{el}}}(E, \mathbf r) = \frac{1}{2\pi}\sum_{ij}\phi_i(\mathbf r)\phi_j(\mathbf r) \Re[\mathbf A_{\mathfrak{el}, ij}(E)]
 
         where :math:`\phi` are the orbitals. Note that the broadening used in the TBtrans calculations
         ensures the broadening of the density, i.e. it should not be necessary to perform energy
@@ -2223,31 +2240,32 @@ class tbtncSileTBtrans(_devncSileTBtrans):
             DM = DensityMatrix.fromsp(geometry, dm)
         return DM
 
+    @missing_input_fdf([("TBT.COOP.Gf", "True")])
     def orbital_COOP(self, E, kavg=True, isc=None, orbitals=None) -> csr_matrix:
         r""" Orbital COOP analysis of the Green function
 
-        This will return a sparse matrix, see ``scipy.sparse.csr_matrix`` for details.
+        This will return a sparse matrix, see `scipy.sparse.csr_matrix` for details.
         Each matrix element of the sparse matrix corresponds to the COOP of the
         underlying geometry.
 
         The COOP analysis can be written as:
 
         .. math::
-            \mathrm{COOP}^{\mathbf G}_{\nu\mu} = \frac{-1}{2\pi}
-              \Im\big[(\mathbf G - \mathbf G^\dagger)_{\nu\mu} \mathbf S_{\mu\nu} \big]
+            \mathrm{COOP}^{\mathbf G}_{ij} = \frac{-1}{2\pi}
+              \Im\big[(\mathbf G - \mathbf G^\dagger)_{ij} \mathbf S_{ji} \big]
 
         The sum of the COOP DOS is equal to the DOS:
 
         .. math::
-            \mathrm{DOS}_{\nu} = \sum_\mu \mathrm{COOP}^{\mathbf G}_{\nu\mu}
+            \mathrm{DOS}_{i} = \sum_j \mathrm{COOP}^{\mathbf G}_{ij}
 
         One can calculate the (diagonal) balanced COOP analysis, see JPCM 15 (2003),
         7751-7761 for details. The DBCOOP is given by:
 
         .. math::
-            D &= \sum_\nu \mathrm{COOP}^{\mathbf G}_{\nu\nu}
+            D &= \sum_i \mathrm{COOP}^{\mathbf G}_{ii}
             \\
-            \mathrm{DBCOOP}^{\mathbf G}_{\nu\mu} &= \mathrm{COOP}^{\mathbf G}_{\nu\mu} / D
+            \mathrm{DBCOOP}^{\mathbf G}_{ij} &= \mathrm{COOP}^{\mathbf G}_{ij} / D
 
         The BCOOP can be looked up in the reference above.
 
@@ -2288,6 +2306,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         """
         return self.orbital_ACOOP(E, None, kavg=kavg, isc=isc, orbitals=orbitals)
 
+    @missing_input_fdf([("TBT.COOP.A", "True")])
     def orbital_ACOOP(
         self, E, elec=0, kavg=True, isc=None, orbitals=None
     ) -> csr_matrix:
@@ -2300,20 +2319,20 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         The COOP analysis can be written as:
 
         .. math::
-            \mathrm{COOP}^{\mathbf A}_{\nu\mu} = \frac{1}{2\pi} \Re\big[\mathbf A_{\nu\mu} \mathbf S_{\mu\nu} \big]
+            \mathrm{COOP}^{\mathbf A}_{ij} = \frac{1}{2\pi} \Re\big[\mathbf A_{ij} \mathbf S_{ji} \big]
 
         The sum of the COOP DOS is equal to the DOS:
 
         .. math::
-            \mathrm{ADOS}_{\nu} = \sum_\mu \mathrm{COOP}^{\mathbf A}_{\nu\mu}
+            \mathrm{ADOS}_{i} = \sum_j \mathrm{COOP}^{\mathbf A}_{ij}
 
         One can calculate the (diagonal) balanced COOP analysis, see JPCM 15 (2003),
         7751-7761 for details. The DBCOOP is given by:
 
         .. math::
-            D &= \sum_\nu \mathrm{COOP}^{\mathbf A}_{\nu\nu}
+            D &= \sum_i \mathrm{COOP}^{\mathbf A}_{ii}
             \\
-            \mathrm{DBCOOP}^{\mathbf A}_{\nu\mu} &= \mathrm{COOP}^{\mathbf A}_{\nu\mu} / D
+            \mathrm{DBCOOP}^{\mathbf A}_{ij} &= \mathrm{COOP}^{\mathbf A}_{ij} / D
 
         The BCOOP can be looked up in the reference above.
 
@@ -2362,7 +2381,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         The atomic COOP are a sum over all orbital COOP:
 
         .. math::
-            \mathrm{COOP}_{\alpha\beta} = \sum_{\nu\in\alpha}\sum_{\mu\in\beta} \mathrm{COOP}_{\nu\mu}
+            \mathrm{COOP}_{IJ} = \sum_{i\in I}\sum_{j\in J} \mathrm{COOP}_{ij}
 
         Parameters
         ----------
@@ -2384,7 +2403,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
            whether the returned COOP are only in the unit-cell.
            If ``True`` this will return a sparse matrix of ``shape = (self.na, self.na)``,
            else, it will return a sparse matrix of ``shape = (self.na, self.na * self.n_s)``.
-           One may figure out the connections via `~sisl.geometry.Geometry.sc_index`.
+           One may figure out the connections via `~sisl._core.geometry.Geometry.sc_index`.
 
         See Also
         --------
@@ -2406,7 +2425,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         The atomic COOP are a sum over all orbital COOP:
 
         .. math::
-            \mathrm{COOP}_{\alpha\beta} = \sum_{\nu\in\alpha}\sum_{\mu\in\beta} \mathrm{COOP}_{\nu\mu}
+            \mathrm{COOP}_{IJ} = \sum_{i\in I}\sum_{j\in J} \mathrm{COOP}_{ij}
 
         This is a shorthand for calling `orbital_ACOOP` and `sparse_orbital_to_atom` in order.
 
@@ -2432,7 +2451,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
            whether the returned COOP are only in the unit-cell.
            If ``True`` this will return a sparse matrix of ``shape = (self.na, self.na)``,
            else, it will return a sparse matrix of ``shape = (self.na, self.na * self.n_s)``.
-           One may figure out the connections via `~sisl.geometry.Geometry.sc_index`.
+           One may figure out the connections via `~sisl._core.geometry.Geometry.sc_index`.
 
         See Also
         --------
@@ -2447,18 +2466,19 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         COOP = self.orbital_ACOOP(E, elec, kavg=kavg, isc=isc, orbitals=orbitals)
         return self.sparse_orbital_to_atom(COOP, uc)
 
+    @missing_input_fdf([("TBT.COHP.Gf", "True")])
     def orbital_COHP(self, E, kavg=True, isc=None, orbitals=None) -> csr_matrix:
         r"""Orbital resolved COHP analysis of the Green function
 
-        This will return a sparse matrix, see ``scipy.sparse.csr_matrix`` for details.
+        This will return a sparse matrix, see `scipy.sparse.csr_matrix` for details.
         Each matrix element of the sparse matrix corresponds to the COHP of the
         underlying geometry.
 
         The COHP analysis can be written as:
 
         .. math::
-            \mathrm{COHP}^{\mathbf G}_{\nu\mu} = \frac{-1}{2\pi}
-              \Im\big[(\mathbf G - \mathbf G^\dagger)_{\nu\mu} \mathbf H_{\mu\nu} \big]
+            \mathrm{COHP}^{\mathbf G}_{ij} = \frac{-1}{2\pi}
+              \Im\big[(\mathbf G - \mathbf G^\dagger)_{ij} \mathbf H_{ji} \big]
 
         Parameters
         ----------
@@ -2494,20 +2514,21 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         """
         return self.orbital_ACOHP(E, None, kavg=kavg, isc=isc, orbitals=orbitals)
 
+    @missing_input_fdf([("TBT.COHP.A", "True")])
     def orbital_ACOHP(
         self, E, elec=0, kavg=True, isc=None, orbitals=None
     ) -> csr_matrix:
         r"""Orbital resolved COHP analysis of the spectral function
 
-        This will return a sparse matrix, see ``scipy.sparse.csr_matrix`` for details.
+        This will return a sparse matrix, see `scipy.sparse.csr_matrix` for details.
         Each matrix element of the sparse matrix corresponds to the COHP of the
         underlying geometry.
 
         The COHP analysis can be written as:
 
         .. math::
-            \mathrm{COHP}^{\mathbf A}_{\nu\mu} = \frac{1}{2\pi} \Re\big[\mathbf A_{\nu\mu}
-                \mathbf H_{\nu\mu} \big]
+            \mathrm{COHP}^{\mathbf A}_{ij} = \frac{1}{2\pi} \Re\big[\mathbf A_{ij}
+                \mathbf H_{ij} \big]
 
         Parameters
         ----------
@@ -2546,7 +2567,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
         The atomic COHP are a sum over all orbital COHP:
 
         .. math::
-            \mathrm{COHP}_{\alpha\beta} = \sum_{\nu\in\alpha}\sum_{\mu\in\beta} \mathrm{COHP}_{\nu\mu}
+            \mathrm{COHP}_{IJ} = \sum_{i\in I}\sum_{j\in J} \mathrm{COHP}_{ij}
 
         Parameters
         ----------
@@ -2568,7 +2589,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
            whether the returned COHP are only in the unit-cell.
            If ``True`` this will return a sparse matrix of ``shape = (self.na, self.na)``,
            else, it will return a sparse matrix of ``shape = (self.na, self.na * self.n_s)``.
-           One may figure out the connections via `~sisl.geometry.Geometry.sc_index`.
+           One may figure out the connections via `~sisl._core.geometry.Geometry.sc_index`.
 
         See Also
         --------
@@ -2609,7 +2630,7 @@ class tbtncSileTBtrans(_devncSileTBtrans):
            whether the returned COHP are only in the unit-cell.
            If ``True`` this will return a sparse matrix of ``shape = (self.na, self.na)``,
            else, it will return a sparse matrix of ``shape = (self.na, self.na * self.n_s)``.
-           One may figure out the connections via `~sisl.geometry.Geometry.sc_index`.
+           One may figure out the connections via `~sisl._core.geometry.Geometry.sc_index`.
 
         See Also
         --------
@@ -2772,7 +2793,9 @@ class tbtncSileTBtrans(_devncSileTBtrans):
             truefalse("DOS" in gelec.variables, "DOS bulk", ["TBT.DOS.Elecs"])
             truefalse("ADOS" in gelec.variables, "DOS spectral", ["TBT.DOS.A"])
             truefalse(
-                "J" in gelec.variables, "orbital-transmission", ["TBT.Current.Orb"]
+                "J" in gelec.variables,
+                "orbital-transmission",
+                ["TBT.T.Orbital", "TBT.Current.Orb"],
             )
             truefalse("DM" in gelec.variables, "Density matrix spectral", ["TBT.DM.A"])
             truefalse("COOP" in gelec.variables, "COOP spectral", ["TBT.COOP.A"])

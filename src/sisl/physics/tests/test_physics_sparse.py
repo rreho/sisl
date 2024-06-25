@@ -1,7 +1,10 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import math as m
+import platform
 import sys
 
 import numpy as np
@@ -66,7 +69,7 @@ def test_eigsh_orthogonal():
     sp[1, 1] = 0.5
     # Fails due to too many requested eigenvalues
     with pytest.raises(TypeError):
-        sp.eigsh()
+        sp.eigsh(n=3)
 
 
 def test_eigsh_non_orthogonal():
@@ -451,8 +454,9 @@ def test_sparse_orbital_transform_basis():
     assert np.abs(Mcsr[-1] - Mt.tocsr(-1)).sum() == 0
 
 
-@pytest.mark.xfail(
-    sys.platform.startswith("win"), reason="Data type cannot be float128"
+@pytest.mark.skipif(
+    sys.platform.startswith("win") or "arm" in platform.machine().lower(),
+    reason="Data type cannot be float128",
 )
 def test_sparse_orbital_transform_combinations():
     M = SparseOrbitalBZSpin(

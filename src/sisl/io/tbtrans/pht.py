@@ -1,6 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 from sisl._internal import set_module
 
 from ..sile import add_sile
@@ -41,15 +43,18 @@ class phtavncSilePHtrans(tbtavncSileTBtrans):
         return self._value("kT", self._elec(elec))[0] * Ry2eV
 
 
-for _name in [
+for _name in (
     "chemical_potential",
     "electron_temperature",
     "kT",
+    "orbital_current",
+    "bond_current",
+    "vector_current",
     "current",
     "current_parameter",
     "shot_noise",
     "noise_power",
-]:
+):
     setattr(phtncSilePHtrans, _name, None)
     setattr(phtavncSilePHtrans, _name, None)
 

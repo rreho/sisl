@@ -34,7 +34,7 @@ and then you have all eigenvalues for all the k-points along the path.
 Sometimes one may want to post-process the data for each k-point.
 As an example lets post-process the DOS on a per k-point basis while
 calculating the average:
- 
+
 >>> H = Hamiltonian(...)
 >>> mp = MonkhorstPack(H, [10, 10, 10])
 >>> E = np.linspace(-2, 2, 100)
@@ -127,7 +127,11 @@ will be used for the parallel processing.
 
 The ``Pool`` should implement some standard methods that are
 existing in the ``pathos`` enviroment such as ``Pool.restart`` and ``Pool.terminate``
-and ``imap`` and ``uimap`` methods. See the ``pathos`` documentation for detalis.
+and ``imap`` and ``uimap`` methods. See the ``pathos`` documentation for details.
+
+Finally, the performance of the parallel pools are generally very dependent
+on the chunksize of the jobs. By default the chunksize is controlled by
+``SISL_PAR_CHUNKSIZE``, and playing with this can heavily impact performance.
 
 
    BrillouinZone
@@ -135,25 +139,30 @@ and ``imap`` and ``uimap`` methods. See the ``pathos`` documentation for detalis
    BandStructure
 
 """
+from __future__ import annotations
 
 import itertools
 from functools import reduce
 from numbers import Integral, Real
+from typing import Sequence, Tuple, Union
 
 import numpy as np
 from numpy import argsort, dot, pi, sum
 
 import sisl._array as _a
+from sisl._core.grid import Grid
+from sisl._core.lattice import Lattice
+from sisl._core.oplist import oplist
+from sisl._core.quaternion import Quaternion
 from sisl._dispatcher import ClassDispatcher
 from sisl._internal import set_module
-from sisl.grid import Grid
-from sisl.lattice import Lattice
+from sisl._math_small import cross3, dot3
 from sisl.messages import SislError, deprecate_argument, info, progressbar, warn
-from sisl.oplist import oplist
-from sisl.quaternion import Quaternion
+from sisl.typing import npt
 from sisl.unit import units
 from sisl.utils import batched_indices
 from sisl.utils.mathematics import cart2spher, fnorm
+from sisl.utils.misc import direction, listify
 
 __all__ = ["BrillouinZone", "MonkhorstPack", "BandStructure", "linspace_bz"]
 
@@ -187,11 +196,12 @@ class BrillouinZoneDispatcher(ClassDispatcher):
 
     Please see :ref:`physics.brillouinzone` for further examples.
     """
+
     pass
 
 
 @set_module("sisl.physics")
-def linspace_bz(bz, stop=None, jumps=None, jump_dk=0.05):
+def linspace_bz(bz, stop=None, jumps=None, jump_dk: float = 0.05):
     r"""Convert points from a BZ object into a linear spacing of maximum value `stop`
 
     Parameters
@@ -214,7 +224,7 @@ def linspace_bz(bz, stop=None, jumps=None, jump_dk=0.05):
         cart = bz.tocartesian(bz.k)
     else:
         cart = bz
-    # calculate vectors between each neighbouring points
+    # calculate vectors between each neighboring points
     dcart = np.diff(cart, axis=0, prepend=cart[0].reshape(1, -1))
     # calculate distances
     dist = (dcart**2).sum(1) ** 0.5
@@ -289,7 +299,7 @@ class BrillouinZone:
         obj_getattr=lambda obj, key: getattr(obj.parent, key),
     )
 
-    def set_parent(self, parent):
+    def set_parent(self, parent) -> None:
         """Update the parent associated to this object
 
         Parameters
@@ -339,7 +349,7 @@ class BrillouinZone:
         self.set_parent(parent)
 
     @staticmethod
-    def merge(bzs, weight_scale=1.0, parent=None):
+    def merge(bzs, weight_scale: Union[Sequence[float], float] = 1.0, parent=None):
         """Merge several BrillouinZone objects into one
 
         The merging strategy only stores the new list of k-points and weights.
@@ -386,10 +396,20 @@ class BrillouinZone:
 
         return BrillouinZone(parent, np.concatenate(k), np.concatenate(w))
 
-    def volume(self, ret_dim=False, periodic=None):
-        """Calculate the volume of the full Brillouin zone of the parent
+    @deprecate_argument(
+        "periodic",
+        "axes",
+        "argument 'periodic' has been deprecated in favor of 'axes', please update your code.",
+        "0.15",
+        "0.16",
+    )
+    def volume(
+        self, ret_dim: bool = False, axes: Optional[CellAxes] = None
+    ) -> Union[float, Tuple[float, int]]:
+        """Calculate the volume of the BrillouinZone, optionally only on some axes `axes`
 
-        This will return the volume depending on the dimensions of the system.
+        This will return the volume of the Brillouin zone,
+        depending on the dimensions of the system.
         Here the dimensions of the system is determined by how many dimensions
         have auxilliary supercells that can contribute to Brillouin zone integrals.
         Therefore the returned value will have differing units depending on
@@ -397,39 +417,45 @@ class BrillouinZone:
 
         Parameters
         ----------
-        ret_dim: bool, optional
+        ret_dim :
            also return the dimensionality of the system
-        periodic : array_like of int, optional
+        axes :
            estimate the volume using only the directions indexed by this array.
-           The default value is `(self.parent.nsc > 1).nonzero()[0]`.
+           The default axes are only the periodic ones (``self.parent.pbc.nonzero()[0]``).
+           Hence the units might not necessarily be 1/Ang^3.
 
         Returns
         -------
         vol :
-           the volume of the Brillouin zone. Units are Ang^D with D being the dimensionality.
+           the volume of the Brillouin zone. Units are 1/Ang^D with D being the dimensionality.
            For 0D it will return 0.
         dimensionality : int
            the dimensionality of the volume
         """
-        # default periodic array
-        if periodic is None:
-            periodic = (self.parent.nsc > 1).nonzero()[0]
+        lattice = self._parent_lattice()
+        if axes is None:
+            axes = lattice.pbc.nonzero()[0]
+        else:
+            axes = map(direction, listify(axes)) | listify
 
-        dim = len(periodic)
+        cell = lattice.rcell
+
+        dim = len(axes)
         vol = 0.0
         if dim == 3:
-            vol = self.parent.volume
-        elif dim == 2:
-            vol = self.parent.area(*periodic)
-        elif dim == 1:
-            vol = self.parent.length[periodic[0]]
-
+            vol = abs(dot3(cell[axes[0]], cross3(cell[axes[1]], cell[axes[2]])))
+        if dim == 2:
+            vol = fnorm(cross3(cell[axes[0]], cell[axes[1]]))
+        if dim == 1:
+            vol = fnorm(cell[axes])
         if ret_dim:
             return vol, dim
         return vol
 
     @staticmethod
-    def parametrize(parent, func, N, *args, **kwargs):
+    def parametrize(
+        parent, func, N: Union[Sequence[int], int], *args, **kwargs
+    ) -> BrillouinZone:
         """Generate a new `BrillouinZone` object with k-points parameterized via the function `func` in `N` separations
 
         Generator of a parameterized Brillouin zone object that contains a parameterized k-point
@@ -487,8 +513,10 @@ class BrillouinZone:
                 k[i] = func(parent, N, indices, *args, **kwargs)
         return BrillouinZone(parent, k)
 
-    @staticmethod
-    def param_circle(parent, N_or_dk, kR, normal, origin, loop=False):
+    @classmethod
+    def param_circle(
+        cls, parent, N_or_dk: Union[int, float], kR: float, normal, origin, loop=False
+    ):
         r"""Create a parameterized k-point list where the k-points are generated on a circle around an origin
 
         The generated circle is a perfect circle in the reciprocal space (Cartesian coordinates).
@@ -503,8 +531,8 @@ class BrillouinZone:
         N_or_dk : int
            number of k-points generated using the parameterization (if an integer),
            otherwise it specifies the discretization length on the circle (in 1/Ang),
-           If the latter case will use less than 4 points a warning will be raised and
-           the number of points increased to 4.
+           If the latter case will use less than 2 points a warning will be raised and
+           the number of points increased to 2.
         kR : float
            radius of the k-point. In 1/Ang
         normal : array_like of float
@@ -540,7 +568,7 @@ class BrillouinZone:
             if N < 2:
                 N = 2
                 info(
-                    "BrillouinZone.param_circle increased the number of circle points to 2."
+                    f"{cls.__name__}.param_circle increased the number of circle points to 2."
                 )
 
         # Conversion object
@@ -568,7 +596,7 @@ class BrillouinZone:
             pv /= fnorm(pv)
             q = Quaternion(phi, pv, rad=True) * Quaternion(theta, [0, 0, 1], rad=True)
         else:
-            q = Quaternion(0.0, [0, 0, k_n[2] / abs(k_n[2])], rad=True)
+            q = Quaternion(0.0, [0, 0, np.sign(k_n[2])], rad=True)
 
         # Calculate k-points
         k = q.rotate(k)
@@ -581,55 +609,42 @@ class BrillouinZone:
 
         return BrillouinZone(parent, k, w)
 
-    def copy(self, parent=None):
-        """Create a copy of this object, optionally changing the parent
-
-        Parameters
-        ----------
-        parent : optional
-           change the parent
-        """
-        if parent is None:
-            parent = self.parent
-        bz = self.__class__(parent, self._k, self.weight)
-        bz._k = self._k.copy()
-        bz._w = self._w.copy()
-        return bz
-
     @property
-    def k(self):
+    def k(self) -> np.ndarray:
         """A list of all k-points (if available)"""
         return self._k
 
     @property
-    def weight(self):
+    def weight(self) -> np.ndarray:
         """Weight of the k-points in the `BrillouinZone` object"""
         return self._w
 
     @property
-    def cell(self):
+    def cell(self) -> np.ndarray:
         return self.parent.cell
 
     @property
-    def rcell(self):
+    def rcell(self) -> np.ndarray:
         return self.parent.rcell
 
-    def tocartesian(self, k):
+    def tocartesian(self, k: Optional[npt.ArrayLike] = None) -> np.ndarray:
         """Transfer a k-point in reduced coordinates to the Cartesian coordinates
 
         Parameters
         ----------
-        k : list of float
-           k-point in reduced coordinates
+        k :
+           k-point in reduced coordinates, defaults to this objects k-points.
 
         Returns
         -------
         numpy.ndarray
             in units of 1/Ang
         """
+        if k is None:
+            k = self.k
         return dot(k, self.rcell)
 
-    def toreduced(self, k):
+    def toreduced(self, k: npt.ArrayLike) -> np.ndarray:
         """Transfer a k-point in Cartesian coordinates to the reduced coordinates
 
         Parameters
@@ -645,7 +660,7 @@ class BrillouinZone:
         return dot(k, self.cell.T / (2 * pi))
 
     @staticmethod
-    def in_primitive(k):
+    def in_primitive(k: npt.ArrayLike) -> np.ndarray:
         """Move the k-point into the primitive point(s) ]-0.5 ; 0.5]
 
         Parameters
@@ -665,7 +680,7 @@ class BrillouinZone:
 
         return k
 
-    def iter(self, ret_weight=False):
+    def iter(self, ret_weight: bool = False):
         """An iterator for the k-points and (possibly) the weights
 
         Parameters
@@ -688,20 +703,6 @@ class BrillouinZone:
 
     def __len__(self):
         return len(self._k)
-
-    def write(self, sile, *args, **kwargs):
-        """Writes k-points to a `~sisl.io.tableSile`.
-
-        This allows one to pass a `tableSile` or a file-name.
-        """
-        from sisl.io import tableSile
-
-        kw = np.concatenate((self.k, self.weight.reshape(-1, 1)), axis=1)
-        if isinstance(sile, tableSile):
-            sile.write_data(kw.T, *args, **kwargs)
-        else:
-            with tableSile(sile, "w") as fh:
-                fh.write_data(kw.T, *args, **kwargs)
 
 
 @set_module("sisl.physics")
@@ -739,7 +740,13 @@ class MonkhorstPack(BrillouinZone):
     """
 
     def __init__(
-        self, parent, nkpt, displacement=None, size=None, centered=True, trs=True
+        self,
+        parent,
+        nkpt: Union[Sequence[int], int],
+        displacement=None,
+        size=None,
+        centered: bool = True,
+        trs: bool = True,
     ):
         super().__init__(parent)
 
@@ -782,8 +789,8 @@ class MonkhorstPack(BrillouinZone):
         if trs:
             # Figure out which direction to TRS
             nmax = 0
-            for i in [0, 1, 2]:
-                if displacement[i] in [0.0, 0.5] and Dn[i] > nmax:
+            for i in (0, 1, 2):
+                if displacement[i] in (0.0, 0.5) and Dn[i] > nmax:
                     nmax = Dn[i]
                     i_trs = i
             if nmax == 1:
@@ -918,26 +925,15 @@ class MonkhorstPack(BrillouinZone):
         self._centered = state["centered"]
         self._trs = state["trs"]
 
-    def copy(self, parent=None):
-        """Create a copy of this object, optionally changing the parent
-
-        Parameters
-        ----------
-        parent : optional
-           change the parent
-        """
-        if parent is None:
-            parent = self.parent
-        bz = self.__class__(
-            parent, self._diag, self._displ, self._size, self._centered, self._trs >= 0
-        )
-        # this is required due to replace calls
-        bz._k = self._k.copy()
-        bz._w = self._w.copy()
-        return bz
-
     @classmethod
-    def grid(cls, n, displ=0.0, size=1.0, centered=True, trs=False):
+    def grid(
+        cls,
+        n,
+        displ: float = 0.0,
+        size: float = 1.0,
+        centered: bool = True,
+        trs: bool = False,
+    ):
         r"""Create a grid of `n` points with an offset of `displ` and sampling `size` around `displ`
 
         The :math:`k`-points are :math:`\Gamma` centered.
@@ -1024,7 +1020,9 @@ class MonkhorstPack(BrillouinZone):
         # Return values
         return k, w
 
-    def replace(self, k, mp, displacement=False, as_index=False, check_vol=True):
+    def replace(
+        self, k, mp, displacement=False, as_index: bool = False, check_vol: bool = True
+    ):
         r"""Replace a k-point with a new set of k-points from a Monkhorst-Pack grid
 
         This method tries to replace an area corresponding to `mp.size` around the k-point `k`
@@ -1259,7 +1257,8 @@ class BandStructure(BrillouinZone):
         "name",
         "names",
         "argument 'name' has been deprecated in favor of 'names', please update your code.",
-        "0.15.0",
+        "0.15",
+        "0.16",
     )
     def __init__(self, parent, *args, **kwargs):
         # points, divisions, names=None):
@@ -1417,21 +1416,6 @@ class BandStructure(BrillouinZone):
         self._k = k
         self._w = _a.fulld(len(self.k), 1 / len(self.k))
 
-    def copy(self, parent=None):
-        """Create a copy of this object, optionally changing the parent
-
-        Parameters
-        ----------
-        parent : optional
-           change the parent
-        """
-        if parent is None:
-            parent = self.parent
-        bz = self.__class__(
-            parent, self.points, self.divisions, self.names, jump_dk=self._jump_dk
-        )
-        return bz
-
     def __getstate__(self):
         """Return dictionary with the current state"""
         state = super().__getstate__()
@@ -1522,7 +1506,7 @@ class BandStructure(BrillouinZone):
         """
         return self.lineark(True)[1:3]
 
-    def tolinear(self, k, ret_index=False, tol=1e-4):
+    def tolinear(self, k, ret_index: bool = False, atol: float = 1e-4):
         """Convert a k-point into the equivalent linear k-point via the distance
 
         Finds the index of the k-point in `self.k` that is closests to `k`.
@@ -1534,15 +1518,15 @@ class BandStructure(BrillouinZone):
         ----------
         k : array_like
            the k-point(s) to locate in the linear values
-        ret_index : bool, optional
+        ret_index :
            whether the indices are also returned
-        tol : float, optional
+        atol :
            when the found k-point has a distance (in Cartesian coordinates)
            is differing by more than `tol` a warning will be issued.
            The tolerance is in units 1/Ang.
         """
         # Faster than to do sqrt all the time
-        tol = tol**2
+        atol = atol**2
         # first convert to the cartesian coordinates (for proper distances)
         ks = self.tocartesian(np.atleast_2d(k))
         kk = self.tocartesian(self.k)
@@ -1551,7 +1535,7 @@ class BandStructure(BrillouinZone):
         def find(k):
             dist = ((kk - k) ** 2).sum(-1)
             idx = np.argmin(dist)
-            if dist[idx] > tol:
+            if dist[idx] > atol:
                 warn(
                     f"{self.__class__.__name__}.tolinear could not find a k-point within given tolerance ({self.toreduced(k)})"
                 )
@@ -1562,7 +1546,7 @@ class BandStructure(BrillouinZone):
             return self.lineark()[idxs], idxs
         return self.lineark()[idxs]
 
-    def lineark(self, ticks=False):
+    def lineark(self, ticks: bool = False):
         """A 1D array which corresponds to the delta-k values of the path
 
         This is mainly meant for plotting but may be useful for finding out
@@ -1585,7 +1569,7 @@ class BandStructure(BrillouinZone):
 
         Parameters
         ----------
-        ticks : bool, optional
+        ticks :
            if `True` the ticks for the points are also returned
 
         See Also

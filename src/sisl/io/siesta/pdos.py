@@ -1,15 +1,17 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import numpy as np
 
 from sisl._array import arrayd, arrayi, asarrayi
+from sisl._core.atom import Atom, Atoms, PeriodicTable
+from sisl._core.geometry import Geometry
+from sisl._core.orbital import AtomicOrbital
 from sisl._help import xml_parse
 from sisl._internal import set_module
-from sisl.atom import Atom, Atoms, PeriodicTable
-from sisl.geometry import Geometry
 from sisl.messages import SislWarning, warn
-from sisl.orbital import AtomicOrbital
 from sisl.unit.siesta import unit_convert
 from sisl.utils import (
     collect_action,
@@ -36,12 +38,12 @@ class pdosSileSiesta(SileSiesta):
     Data file containing the PDOS as calculated by Siesta.
     """
 
-    def read_geometry(self):
+    def read_geometry(self) -> Geometry:
         """Read the geometry with coordinates and correct orbital counts"""
         return self.read_data()[0]
 
     @sile_fh_open(True)
-    def read_fermi_level(self):
+    def read_fermi_level(self) -> float:
         """Returns the fermi-level"""
         # Get the element-tree
         root = xml_parse(self.fh).getroot()
@@ -53,7 +55,7 @@ class pdosSileSiesta(SileSiesta):
         return Ef
 
     @sile_fh_open(True)
-    def read_data(self, as_dataarray=False):
+    def read_data(self, as_dataarray: bool = False):
         r"""Returns data associated with the PDOS file
 
         For spin-polarized calculations the returned values are up/down, orbitals, energy.
@@ -69,10 +71,14 @@ class pdosSileSiesta(SileSiesta):
 
         Returns
         -------
-        geom : Geometry instance with positions, atoms and orbitals.
-        E : the energies at which the PDOS has been evaluated at (if Fermi-level present in file energies are shifted to :math:`E - E_F = 0`).
-        PDOS : an array of DOS with dimensions ``(nspin, geom.no, len(E))`` (with different spin-components) or ``(geom.no, len(E))`` (spin-symmetric).
-        DataArray : if `as_dataarray` is True, only this data array is returned, in this case all data can be post-processed using the `xarray` selection routines.
+        geom : Geometry
+            instance with positions, atoms and orbitals.
+        E : numpy.ndarray
+            the energies at which the PDOS has been evaluated at (if Fermi-level present in file energies are shifted to :math:`E - E_F = 0`).
+        PDOS : numpy.ndarray
+            an array of DOS with dimensions ``(nspin, geom.no, len(E))`` (with different spin-components) or ``(geom.no, len(E))`` (spin-symmetric).
+        all : xarray.DataArray
+            if `as_dataarray` is True, only this data array is returned, in this case all data can be post-processed using the `xarray` selection routines.
         """
         # Get the element-tree
         root = xml_parse(self.fh).getroot()
@@ -405,7 +411,7 @@ will store the spin x/y components of all atoms in spin_x_all.dat/spin_y_all.dat
             "-E",
             action=ERange,
             help="""Denote the sub-section of energies that are extracted: "-1:0,1:2" [eV]
-                       
+
                        This flag takes effect on all energy-resolved quantities and is reset whenever --plot or --out is called""",
         )
 
@@ -492,7 +498,7 @@ will store the spin x/y components of all atoms in spin_x_all.dat/spin_y_all.dat
                     else:
                         # the stuff must be a range of directions
                         # so simply put it in
-                        idx = list(map(direction, value))
+                        idx = list(map(lambda x: direction(x) + 1, value))
                         name = value
 
                         def _filter(PDOS):

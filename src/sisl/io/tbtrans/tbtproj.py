@@ -1,6 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 try:
     from StringIO import StringIO
 except Exception:
@@ -14,6 +16,7 @@ from sisl.unit.siesta import unit_convert
 from sisl.utils import collect_action, default_ArgumentParser, list2str
 
 from ..sile import add_sile
+from .sile import missing_input_fdf
 from .tbt import tbtncSileTBtrans
 
 __all__ = ["tbtprojncSileTBtrans"]
@@ -43,11 +46,11 @@ class tbtprojncSileTBtrans(tbtncSileTBtrans):
             elec_mol_proj = elec_mol_proj.split(".")
         if len(elec_mol_proj) == 1:
             return elec_mol_proj
-        elif len(elec_mol_proj) != 3:
+        if len(elec_mol_proj) != 3:
             raise ValueError(
                 f"Projection specification does not contain 3 fields: <electrode>.<molecule>.<projection> is required."
             )
-        return [elec_mol_proj[i] for i in [1, 2, 0]]
+        return [elec_mol_proj[i] for i in (1, 2, 0)]
 
     @property
     def elecs(self):
@@ -85,6 +88,7 @@ class tbtprojncSileTBtrans(tbtncSileTBtrans):
         mol = self.groups[molecule]
         return list(mol.groups.keys())
 
+    @missing_input_fdf([("TBT.Projs.DOS.A", "True")])
     def ADOS(
         self,
         elec_mol_proj,
@@ -100,7 +104,7 @@ class tbtprojncSileTBtrans(tbtncSileTBtrans):
         Extract the projected spectral DOS from electrode `elec` on a selected subset of atoms/orbitals in the device region
 
         .. math::
-           \mathrm{ADOS}_\mathfrak{el}(E) = \frac{1}{2\pi N} \sum_{\nu\in \mathrm{atom}/\mathrm{orbital}} [\mathbf{G}(E)|i\rangle\langle i|\Gamma_\mathfrak{el}|i\rangle\langle i|\mathbf{G}^\dagger]_{\nu\nu}(E)
+           \mathrm{ADOS}_\mathfrak{el}(E) = \frac{1}{2\pi N} \sum_{i\in \{I\}} [\mathbf{G}(E)|i\rangle\langle i|\Gamma_\mathfrak{el}|i\rangle\langle i|\mathbf{G}^\dagger]_{ii}(E)
 
         where :math:`|i\rangle` may be a sum of states.
         The normalization constant (:math:`N`) is defined in the routine `norm` and depends on the
@@ -138,6 +142,15 @@ class tbtprojncSileTBtrans(tbtncSileTBtrans):
             * eV2Ry
         )
 
+    def orbital_transmission(self, E, elec_mol_proj, *args, **kwargs):
+        mol_proj_elec = self._mol_proj_elec(elec_mol_proj)
+        super().orbital_transmission(E, mol_proj_elec, *args, **kwargs)
+
+    # TODO fix doc strings for elec specification, the argument isn't called 'elec', but
+    # elec_mol_proj_from
+    orbital_transmission.__doc__ = tbtncSileTBtrans.orbital_transmission.__doc__
+
+    @missing_input_fdf([("TBT.Projs.T.All", "True")])
     def transmission(self, elec_mol_proj_from, elec_mol_proj_to, kavg=True):
         """Transmission from `mol_proj_elec_from` to `mol_proj_elec_to`
 
@@ -160,6 +173,7 @@ class tbtprojncSileTBtrans(tbtncSileTBtrans):
             elec_mol_proj_to = ".".join(elec_mol_proj_to)
         return self._value_avg(elec_mol_proj_to + ".T", mol_proj_elec, kavg=kavg)
 
+    @missing_input_fdf([("TBT.Projs.T.Eig", "<int>")])
     def transmission_eig(self, elec_mol_proj_from, elec_mol_proj_to, kavg=True):
         """Transmission eigenvalues from `elec_mol_proj_from` to `elec_mol_proj_to`
 
@@ -182,6 +196,7 @@ class tbtprojncSileTBtrans(tbtncSileTBtrans):
             elec_mol_proj_to = ".".join(elec_mol_proj_to)
         return self._value_avg(elec_mol_proj_to + ".T.Eig", mol_proj_elec, kavg=kavg)
 
+    @missing_input_fdf([("TBT.Projs.DM.A", "True")])
     def Adensity_matrix(
         self, elec_mol_proj, E, kavg=True, isc=None, orbitals=None, geometry=None
     ):
@@ -193,9 +208,9 @@ class tbtprojncSileTBtrans(tbtncSileTBtrans):
         routine. Basically the LDOS in real-space may be calculated as
 
         .. math::
-            \rho_{\mathbf A_{\mathfrak{el}}}(E, \mathbf r) = \frac{1}{2\pi}\sum_{\nu\mu}\phi_\nu(\mathbf r)\phi_\mu(\mathbf r) \Re[\mathbf A_{\mathfrak{el}, \nu\mu}(E)]
+            \boldsymbol\rho_{\mathbf A_{\mathfrak{el}}}(E, \mathbf r) = \frac{1}{2\pi}\sum_{ij}\phi_i(\mathbf r)\phi_j(\mathbf r) \Re[\mathbf A_{\mathfrak{el}, ij}(E)]
 
-        where :math:`\phi` are the orbitals. Note that the broadening used in the TBtrans calculations
+        where :math:`\phi` are the real-space orbitals. Note that the broadening used in the TBtrans calculations
         ensures the broadening of the density, i.e. it should not be necessary to perform energy
         averages over the density matrices.
 
@@ -243,30 +258,31 @@ class tbtprojncSileTBtrans(tbtncSileTBtrans):
             DM = DensityMatrix.fromsp(geometry, dm)
         return DM
 
+    @missing_input_fdf([("TBT.Projs.COOP.A", "True")])
     def orbital_ACOOP(self, elec_mol_proj, E, kavg=True, isc=None, orbitals=None):
         r""" Orbital COOP analysis of the projected spectral function
 
-        This will return a sparse matrix, see `~scipy.sparse.csr_matrix` for details.
+        This will return a sparse matrix, see `scipy.sparse.csr_matrix` for details.
         Each matrix element of the sparse matrix corresponds to the COOP of the
         underlying geometry.
 
         The COOP analysis can be written as:
 
         .. math::
-            \mathrm{COOP}^{\mathbf A}_{\nu\mu} = \frac{1}{2\pi} \Re\big[\mathbf A_{\nu\mu} \mathbf S_{\mu\nu} \big]
+            \mathrm{COOP}^{\mathbf A}_{ij} = \frac{1}{2\pi} \Re\big[\mathbf A_{ij} \mathbf S_{ji} \big]
 
         The sum of the COOP DOS is equal to the DOS:
 
         .. math::
-            \mathrm{ADOS}_{\nu} = \sum_\mu \mathrm{COOP}^{\mathbf A}_{\nu\mu}
+            \mathrm{ADOS}_{i} = \sum_j \mathrm{COOP}^{\mathbf A}_{ij}
 
         One can calculate the (diagonal) balanced COOP analysis, see JPCM 15 (2003),
         7751-7761 for details. The DBCOOP is given by:
 
         .. math::
-            D &= \sum_\nu \mathrm{COOP}^{\mathbf A}_{\nu\nu}
+            D &= \sum_i \mathrm{COOP}^{\mathbf A}_{ii}
             \\
-            \mathrm{DBCOOP}^{\mathbf A}_{\nu\mu} &= \mathrm{COOP}^{\mathbf A}_{\nu\mu} / D
+            \mathrm{DBCOOP}^{\mathbf A}_{ij} &= \mathrm{COOP}^{\mathbf A}_{ij} / D
 
         The BCOOP can be looked up in the reference above.
 
@@ -306,21 +322,24 @@ class tbtprojncSileTBtrans(tbtncSileTBtrans):
         atom_ACOHP : atomic COHP analysis of the projected spectral function
         """
         mol_proj_elec = self._mol_proj_elec(elec_mol_proj)
-        COOP = self._sparse_data("COOP", mol_proj_elec, E, kavg, isc, orbitals) * eV2Ry
+        COOP = (
+            self._sparse_matrix("COOP", mol_proj_elec, E, kavg, isc, orbitals) * eV2Ry
+        )
         return COOP
 
+    @missing_input_fdf([("TBT.Projs.COHP.A", "True")])
     def orbital_ACOHP(self, elec_mol_proj, E, kavg=True, isc=None, orbitals=None):
         r"""Orbital COHP analysis of the projected spectral function
 
-        This will return a sparse matrix, see ``scipy.sparse.csr_matrix`` for details.
+        This will return a sparse matrix, see `scipy.sparse.csr_matrix` for details.
         Each matrix element of the sparse matrix corresponds to the COHP of the
         underlying geometry.
 
         The COHP analysis can be written as:
 
         .. math::
-            \mathrm{COHP}^{\mathbf A}_{\nu\mu} = \frac{1}{2\pi} \Re\big[\mathbf A_{\nu\mu}
-                \mathbf H_{\nu\mu} \big]
+            \mathrm{COHP}^{\mathbf A}_{ij} = \frac{1}{2\pi} \Re\big[\mathbf A_{ij}
+                \mathbf H_{ij} \big]
 
         Parameters
         ----------
@@ -350,7 +369,7 @@ class tbtprojncSileTBtrans(tbtncSileTBtrans):
         atom_ACOOP : atomic COOP analysis of the projected spectral function
         """
         mol_proj_elec = self._mol_proj_elec(elec_mol_proj)
-        COHP = self._sparse_data("COHP", mol_proj_elec, E, kavg, isc, orbitals)
+        COHP = self._sparse_matrix("COHP", mol_proj_elec, E, kavg, isc, orbitals)
         return COHP
 
     @default_ArgumentParser(description="Extract data from a TBT.Proj.nc file")

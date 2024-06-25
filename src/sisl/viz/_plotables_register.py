@@ -1,6 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 """
 This file defines all the classes that are plotable.
 
@@ -8,20 +10,40 @@ It does so by patching them accordingly
 """
 import sisl
 import sisl.io.siesta as siesta
-
-# import sisl.io.tbtrans as tbtrans
 from sisl.io.sile import BaseSile, get_siles
 
 from ._plotables import register_data_source, register_plotable, register_sile_method
 from .data import *
 from .plots import *
 
-# from .old_plot import Plot
-# from .plotutils import get_plot_classes
-
+# ======================
+#     IMPORTANT NOTE
+# ======================
+# If you register a new plotable class, make sure it is included in the
+# lazy_viz_classes list in sisl/_lazy_viz.py, so that a placeholder is set for
+# its plot attribute.
 
 __all__ = []
 
+register = register_plotable
+
+# # -----------------------------------------------------
+# #           Register plotable sisl objects
+# # -----------------------------------------------------
+
+# Matrices
+register(sisl.SparseCSR, AtomicMatrixPlot, "matrix", default=True)
+register(sisl.SparseOrbital, AtomicMatrixPlot, "matrix", default=True)
+register(sisl.SparseAtom, AtomicMatrixPlot, "matrix", default=True)
+
+# # Geometry
+register(sisl.Geometry, GeometryPlot, "geometry", default=True)
+
+# # Grid
+register(sisl.Grid, GridPlot, "grid", default=True)
+
+# Brilloiun zone
+register(sisl.BrillouinZone, SitesPlot, "sites_obj")
 
 # -----------------------------------------------------
 #               Register data sources
@@ -48,25 +70,12 @@ register_data_source(
 #               Register plotable siles
 # -----------------------------------------------------
 
-register = register_plotable
-
 for GeomSile in get_siles(attrs=["read_geometry"]):
     register_sile_method(GeomSile, "read_geometry", GeometryPlot, "geometry")
 
 for GridSile in get_siles(attrs=["read_grid"]):
     register_sile_method(GridSile, "read_grid", GridPlot, "grid", default=True)
 
-# # -----------------------------------------------------
-# #           Register plotable sisl objects
-# # -----------------------------------------------------
-
-# # Geometry
-register(sisl.Geometry, GeometryPlot, "geometry", default=True)
-
-# # Grid
-register(sisl.Grid, GridPlot, "grid", default=True)
-
-# Brilloiun zone
-register(sisl.BrillouinZone, SitesPlot, "sites_obj")
 
 sisl.BandStructure.plot.set_default("bands")
+sisl.Hamiltonian.plot.set_default("atomicmatrix")

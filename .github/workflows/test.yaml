@@ -33,7 +33,10 @@ on:
         description: 'Which marks to test'
         required: false
         default: ''
-
+      verbose:
+        description: 'Run pytest with -vvv'
+        required: false
+        type: boolean
 
 jobs:
 
@@ -62,7 +65,16 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        python-version: ['3.8', '3.11']
+        python-version: ['3.9', '3.12']
+        full: [true]
+        include:
+          # Run a minimal dependency check for 3.9
+          # This is not per-see a minimal dependency check.
+          # However, it checks that sisl can run without viz
+          # and those dependencies.
+          - python-version: '3.9'
+            os: ubuntu-latest
+            full: false
 
     steps:
     - name: Checkout sisl
@@ -70,9 +82,9 @@ jobs:
       with:
         ref: '${{ github.event.inputs.branch }}'
         # The files submodule is required for tests purposes
-        submodules: true
+        submodules: ${{ matrix.full }}
         # the 'files' submodule uses lfs
-        lfs: true
+        lfs: ${{ matrix.full }}
 
     - name: Print-out commit information
       run: |
@@ -92,25 +104,38 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install sisl + dependencies
+      env:
+        SKBUILD_CMAKE_ARGS: -DWITH_COVERAGE:bool=true;-DWITH_LINE_DIRECTIVES:bool=true
+        CC: gcc
+        FC: gfortran
       run: |
         python -m pip install --progress-bar=off --upgrade pip
-        python -m pip install --progress-bar=off Cython "scikit-build-core[pyproject]"
-        python -m pip install --progress-bar=off -r ci/requirements.txt -r ci/requirements-viz.txt -r requirements.txt
-        CC=gcc FC=gfortran python -m pip install -vvv .
+        if [[ "${{ matrix.full }}" == "true" ]]; then
+          python -m pip install --progress-bar=off -vvv .[test,viz]
+        else
+          python -m pip install --progress-bar=off -vvv .[test]
+        fi
+
+    - name: Running sisl import test
+      run: |
+        sgeom --help
+        stoolbox atom-plot --help
 
     - name: Running sisl tests
       env:
+        SISL_NUM_PROCS: 1
+        OMP_NUM_THREADS: 1
         SISL_FILES_TESTS: ${{ github.workspace }}/files/tests
       run: |
-        # This needs to be done in a separate folder
-        # Otherwise the import will try to use the one in the current folder
-        mkdir sisl-test-dir ; cd sisl-test-dir
+        ls -al
         if [[ "${{ github.event.inputs.marks }}" == "" ]]; then
          ADD_FLAGS=""
         else
          ADD_FLAGS="-m ${{ github.event.inputs.marks }}"
         fi
-        # --cov forces the reading of .coveragerc
+        if [[ "${{ github.event.inputs.verbose }}" == "true" ]]; then
+         ADD_FLAGS="$ADD_FLAGS -vvv"
+        fi
         ADD_TOOLS=""
         for tool in btd models ; do
           ADD_TOOLS="$ADD_TOOLS sisl_toolbox.$tool"
@@ -121,12 +146,13 @@ jobs:
         for tool in poisson ; do
           ADD_TOOLS="$ADD_TOOLS sisl_toolbox.transiesta.$tool"
         done
-        py.test -vv -rX --cov --cov-report term-missing --cov-report xml --cov-config=../.coveragerc $ADD_FLAGS --pyargs sisl $ADD_TOOLS
-        #cp coverage.xml ../
+        # Try to enable code-coverage in the tests
+        coverage run -m pytest --pyargs sisl $ADD_FLAGS $ADD_TOOLS
+        ls -al
 
     - name: Upload code-coverage
       if: ${{ github.event.inputs.marks == '' }}
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
-        directory: ./sisl-test-dir/
         verbose: true
+        token: ${{ secrets.CODECOV_TOKEN }}

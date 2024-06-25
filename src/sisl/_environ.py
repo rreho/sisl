@@ -1,6 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -92,17 +94,39 @@ def get_environ_variable(name: str):
     return variable["process"](variable["value"])
 
 
-# We register a few variables that may be used several places
-try:
-    _nprocs = len(os.sched_getaffinity(0))
-except Exception:
-    _nprocs = 1
+register_environ_variable(
+    "SISL_LOG_FILE", "", "Log file to write into. If empty, do not log.", process=Path
+)
+
+register_environ_variable(
+    "SISL_LOG_LEVEL",
+    "INFO",
+    "Define the log level used when writing to the file. Should be importable from logging module.",
+    lambda x: x.upper(),
+)
+
 
 register_environ_variable(
     "SISL_NUM_PROCS",
-    min(1, _nprocs),
-    "Maximum number of CPU's used for parallel computing",
+    1,
+    "Maximum number of CPU's used for parallel computing (len(os.sched_getaffinity(0)) is a good guess)",
     process=int,
+)
+
+
+def _float_or_int(value):
+    value = float(value)
+    # See if it is an integer
+    if value == int(value):
+        value = int(value)
+    return value
+
+
+register_environ_variable(
+    "SISL_PAR_CHUNKSIZE",
+    0.1,
+    "Default chunksize for parallel processing, can severely impact performance.",
+    process=_float_or_int,
 )
 
 register_environ_variable(
@@ -129,23 +153,10 @@ register_environ_variable(
 )
 
 register_environ_variable(
-    "SISL_VIZ_AUTOLOAD",
-    "false",
-    dedent(
-        """\
-                          Determines whether the visualization module is automatically loaded.
-                          It may be good to leave auto load off if you are doing performance critical
-                          calculations to avoid the overhead of loading the visualization module.
-                          """
-    ),
-    process=lambda val: val and val.lower().strip() in ["1", "t", "true"],
-)
-
-register_environ_variable(
     "SISL_SHOW_PROGRESS",
     "false",
     "Whether routines which can enable progress bars should show them by default or not.",
-    process=lambda val: val and val.lower().strip() in ["1", "t", "true"],
+    process=lambda val: val and val.lower().strip() in ("1", "t", "true"),
 )
 
 register_environ_variable(

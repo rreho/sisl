@@ -1,6 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 from collections import namedtuple
 from itertools import groupby
 from numbers import Integral
@@ -10,6 +12,7 @@ import numpy as np
 
 from sisl import Atom, Geometry, Lattice
 from sisl._internal import set_module
+from sisl.typing import AtomsLike
 
 from ._common import geometry2uc, geometry_define_nsc
 
@@ -302,7 +305,7 @@ def _slab_with_vacuum(func, *args, **kwargs):
 @set_module("sisl.geom")
 def fcc_slab(
     alat: float,
-    atoms,
+    atoms: AtomsLike,
     miller: Union[int, str, Tuple[int, int, int]],
     layers=None,
     vacuum: Union[float, Sequence[float]] = 20.0,
@@ -310,7 +313,7 @@ def fcc_slab(
     orthogonal: bool = False,
     start=None,
     end=None,
-):
+) -> Geometry:
     r"""Surface slab forming a face-centered cubic (FCC) crystal
 
     The slab layers are stacked along the :math:`z`-axis. The default stacking is the first
@@ -504,7 +507,7 @@ def fcc_slab(
 @set_module("sisl.geom")
 def bcc_slab(
     alat: float,
-    atoms,
+    atoms: AtomsLike,
     miller: Union[int, str, Tuple[int, int, int]],
     layers=None,
     vacuum: Union[float, Sequence[float]] = 20.0,
@@ -512,7 +515,7 @@ def bcc_slab(
     orthogonal: bool = False,
     start=None,
     end=None,
-):
+) -> Geometry:
     r"""Construction of a surface slab from a body-centered cubic (BCC) crystal
 
     The slab layers are stacked along the :math:`z`-axis. The default stacking is the first
@@ -668,7 +671,7 @@ def bcc_slab(
 @set_module("sisl.geom")
 def rocksalt_slab(
     alat: float,
-    atoms,
+    atoms: AtomsLike,
     miller: Union[int, str, Tuple[int, int, int]],
     layers=None,
     vacuum: Union[float, Sequence[float]] = 20.0,
@@ -676,7 +679,7 @@ def rocksalt_slab(
     orthogonal: bool = False,
     start=None,
     end=None,
-):
+) -> Geometry:
     r"""Surface slab forming a rock-salt crystal (halite)
 
     This structure is formed by two interlocked fcc crystals for each of the two elements.

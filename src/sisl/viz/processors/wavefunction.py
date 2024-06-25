@@ -1,9 +1,14 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 from typing import Optional
 
 import numpy as np
 
 import sisl
-from sisl.geometry import Geometry
+from sisl._core.geometry import Geometry
 from sisl.grid import Grid
 from sisl.physics.electron import EigenstateElectron, wavefunction
 from sisl.physics.hamiltonian import Hamiltonian
@@ -54,8 +59,7 @@ def get_ith_eigenstate(eigenstate: EigenstateElectron, i: int):
     return eigenstate[wf_i]
 
 
-class WavefunctionDataNode(GridDataNode):
-    ...
+class WavefunctionDataNode(GridDataNode): ...
 
 
 @WavefunctionDataNode.register
@@ -92,8 +96,8 @@ def eigenstate_wf(
     # Get the particular WF that we want from the eigenstate object
     wf_state = get_ith_eigenstate(eigenstate, i)
 
-    # Ensure we are dealing with the R gauge
-    wf_state.change_gauge("R")
+    # Ensure we are dealing with the cell gauge
+    wf_state.change_gauge("cell")
 
     # Finally, insert the wavefunction values into the grid.
     wavefunction(wf_state.state, grid, geometry=geometry, k=k, spinor=0, spin=spin)

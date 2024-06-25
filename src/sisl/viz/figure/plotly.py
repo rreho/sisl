@@ -1,3 +1,8 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import itertools
 from typing import Optional, Sequence
 
@@ -59,7 +64,7 @@ pio.templates["sisl"] = go.layout.Template(
                     ),
                 )
             },
-        }
+        },
         # "editrevision": True
         # "title": {"xref": "paper", "x": 0.5, "text": "Whhhhhhhat up", "pad": {"b": 0}}
     },
@@ -116,7 +121,7 @@ pio.templates["sisl_dark"] = go.layout.Template(
                     ),
                 )
             },
-        }
+        },
         # "editrevision": True
         # "title": {"xref": "paper", "x": 0.5, "text": "Whhhhhhhat up", "pad": {"b": 0}}
     },
@@ -143,6 +148,8 @@ class PlotlyFigure(Figure):
     _multi_axis = None
 
     _layout_defaults = {}
+
+    figure: Optional[go.Figure] = None
 
     def _init_figure(self, *args, **kwargs):
         self.figure = go.Figure()
@@ -306,6 +313,7 @@ class PlotlyFigure(Figure):
                         **action["kwargs"].get("meta", {}),
                         "i_plot": i,
                     }
+                sanitized_section_actions.append(action)
 
             yield sanitized_section_actions
 
@@ -396,6 +404,10 @@ class PlotlyFigure(Figure):
 
         self.update_layout(sliders=[slider], updatemenus=updatemenus)
 
+    @classmethod
+    def fig_has_attr(cls, key: str) -> bool:
+        return hasattr(go.Figure, key)
+
     def __getattr__(self, key):
         if key != "figure":
             return getattr(self.figure, key)
@@ -428,14 +440,21 @@ class PlotlyFigure(Figure):
     #  METHODS TO STANDARIZE BACKENDS
     # --------------------------------
     def init_coloraxis(
-        self, name, cmin=None, cmax=None, cmid=None, colorscale=None, **kwargs
+        self,
+        name,
+        cmin=None,
+        cmax=None,
+        cmid=None,
+        colorscale=None,
+        showscale=True,
+        **kwargs,
     ):
         if len(self._coloraxes) == 0:
             kwargs["ax_name"] = "coloraxis"
         else:
             kwargs["ax_name"] = f"coloraxis{len(self._coloraxes) + 1}"
 
-        super().init_coloraxis(name, cmin, cmax, cmid, colorscale, **kwargs)
+        super().init_coloraxis(name, cmin, cmax, cmid, colorscale, showscale, **kwargs)
 
         ax_name = kwargs["ax_name"]
         self.update_layout(
@@ -445,6 +464,7 @@ class PlotlyFigure(Figure):
                     "cmin": cmin,
                     "cmax": cmax,
                     "cmid": cmid,
+                    "showscale": showscale,
                 }
             }
         )
@@ -570,7 +590,7 @@ class PlotlyFigure(Figure):
         )
 
     def draw_scatter(self, x, y, name=None, marker={}, **kwargs):
-        marker.pop("dash", None)
+        marker = {k: v for k, v in marker.items() if k != "dash"}
         self.draw_line(x, y, name, marker=marker, mode="markers", **kwargs)
 
     def draw_multicolor_scatter(self, *args, **kwargs):
@@ -586,8 +606,9 @@ class PlotlyFigure(Figure):
 
         super().draw_multicolor_line_3D(x, y, z, **kwargs)
 
-    def draw_scatter_3D(self, *args, **kwargs):
-        self.draw_line_3D(*args, mode="markers", **kwargs)
+    def draw_scatter_3D(self, *args, marker={}, **kwargs):
+        marker = {k: v for k, v in marker.items() if k != "dash"}
+        self.draw_line_3D(*args, mode="markers", marker=marker, **kwargs)
 
     def draw_multicolor_scatter_3D(self, *args, **kwargs):
         kwargs["marker"] = self._handle_multicolor_scatter(kwargs["marker"], kwargs)
@@ -623,10 +644,10 @@ class PlotlyFigure(Figure):
                 size=sp_size,
                 color=sp_color,
                 opacity=sp_opacity,
-                name=f"{name}_{i}",
+                name=name,
                 legendgroup=name,
                 showlegend=showlegend,
-                meta=meta,
+                meta={**meta, f"{name}_i": i},
             )
             showlegend = False
 
@@ -758,10 +779,31 @@ class PlotlyFigure(Figure):
         name=None,
         zsmooth=False,
         coloraxis=None,
+        textformat=None,
         row=None,
         col=None,
         **kwargs,
     ):
+        if textformat is not None:
+            # If the user wants a custom color, we must define the text strings to be empty
+            # for NaN values. If there is not custom color, plotly handles this for us by setting
+            # the text color to the same as the background for those values so that they are not
+            # visible.
+            if "color" in kwargs.get("textfont", {}) and np.any(np.isnan(values)):
+                to_string = np.vectorize(
+                    lambda x: "" if np.isnan(x) else f"{x:{textformat}}"
+                )
+                kwargs = {
+                    "text": to_string(values),
+                    "texttemplate": "%{text}",
+                    **kwargs,
+                }
+            else:
+                kwargs = {
+                    "texttemplate": "%{z:" + textformat + "}",
+                    **kwargs,
+                }
+
         self.add_trace(
             {
                 "type": "heatmap",
@@ -772,6 +814,7 @@ class PlotlyFigure(Figure):
                 "zsmooth": zsmooth,
                 "coloraxis": self._get_coloraxis_name(coloraxis),
                 "meta": kwargs.pop("meta", {}),
+                **kwargs,
             },
             row=row,
             col=col,
@@ -819,7 +862,9 @@ class PlotlyFigure(Figure):
 
         updates = {}
         if ax_name.endswith("axis"):
-            updates = {f"scene_{ax_name}": kwargs}
+            scene_updates = {**kwargs}
+            scene_updates.pop("constrain", None)
+            updates = {f"scene_{ax_name}": scene_updates}
         if axis != "z":
             updates.update({ax_name: kwargs})
 

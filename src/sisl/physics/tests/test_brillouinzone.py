@@ -1,6 +1,8 @@
-# Source Code Form is subject to the terms of the Mozilla Public
+# This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import math as m
 from itertools import product
 
@@ -69,13 +71,18 @@ class TestBrillouinZone:
 
     def test_volume_self(self):
         bz = BrillouinZone(1.0)
-        assert bz.volume(True)[1] == 0
-        bz = BrillouinZone(Lattice(1, nsc=[3, 1, 1]))
+        bz.parent.pbc = (False, False, False)
+        v, dim = bz.volume(True)
+        assert dim == 0
+        assert v == pytest.approx(0)
+        bz.parent.pbc = (True, False, False)
         assert bz.volume(True)[1] == 1
-        bz = BrillouinZone(Lattice(1, nsc=[3, 3, 1]))
+        bz.parent.pbc = (True, True, False)
         assert bz.volume(True)[1] == 2
-        bz = BrillouinZone(Lattice(1, nsc=[3, 3, 3]))
-        assert bz.volume(True)[1] == 3
+        bz.parent.pbc = (True, True, True)
+        v, dim = bz.volume(True)
+        assert dim == 3
+        assert v == pytest.approx((2 * np.pi) ** 3)
 
     def test_volume_direct(self):
         bz = BrillouinZone(1.0)
@@ -460,10 +467,7 @@ class TestMonkhorstPack:
             assert np.allclose(ds1.data_vars[var].values, data)
         assert len(ds1.coords) < len(ds0.coords)
 
-    def test_pathos(self):
-        pytest.skip(
-            "BrillouinZone.apply(pool=True|int) scales extremely bad and may cause stall"
-        )
+    def test_bz_parallel_pathos(self):
         pytest.importorskip("pathos", reason="pathos not available")
 
         from sisl import Hamiltonian, geom
@@ -482,7 +486,8 @@ class TestMonkhorstPack:
 
             nprocs = len(psutil.Process().cpu_affinity()) // 2
         except Exception:
-            nprocs = os.cpu_count() // 2
+            nprocs = len(os.sched_getaffinity(0)) // 2
+        nprocs = max(2, nprocs)
         omp_num_threads = os.environ.get("OMP_NUM_THREADS")
 
         # Check that the ObjectDispatcher works

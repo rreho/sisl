@@ -1,6 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import numpy as np
 
 from sisl import Atom, Geometry, Grid, Lattice, SislError
@@ -27,16 +29,14 @@ class cubeSile(Sile):
     """
 
     @sile_fh_open()
-    @deprecate_argument(
-        "sc", "lattice", "use lattice= instead of sc=", from_version="0.15"
-    )
+    @deprecate_argument("sc", "lattice", "use lattice= instead of sc=", "0.15", "0.16")
     def write_lattice(
         self,
-        lattice,
-        fmt="15.10e",
+        lattice: Lattice,
+        fmt: str = "15.10e",
         size=None,
         origin=None,
-        unit="Bohr",
+        unit: str = "Bohr",
         *args,
         **kwargs,
     ):
@@ -44,15 +44,15 @@ class cubeSile(Sile):
 
         Parameters
         ----------
-        lattice : Lattice
+        lattice :
             lattice to be written
-        fmt : str, optional
+        fmt :
             floating point format for stored values
         size : (3, ), optional
             shape of the stored grid (``[1, 1, 1]``)
         origin : (3, ), optional
             origin of the cell (``[0, 0, 0]``)
-        unit: str, optional
+        unit:
             what length unit should the cube file data be written in
         """
         sile_raise_write(self)
@@ -83,11 +83,11 @@ class cubeSile(Sile):
     @sile_fh_open()
     def write_geometry(
         self,
-        geometry,
-        fmt="15.10e",
+        geometry: Geometry,
+        fmt: str = "15.10e",
         size=None,
         origin=None,
-        unit="Bohr",
+        unit: str = "Bohr",
         *args,
         **kwargs,
     ):
@@ -95,15 +95,15 @@ class cubeSile(Sile):
 
         Parameters
         ----------
-        geometry : Geometry
+        geometry :
             geometry to be written
-        fmt : str, optional
+        fmt :
             floating point format for stored values
         size : (3, ), optional
             shape of the stored grid (``[1, 1, 1]``)
         origin : (3, ), optional
             origin of the cell (``[0, 0, 0]``)
-        unit: str, optional
+        unit:
             what length unit should the cube file data be written in
         """
         sile_raise_write(self)
@@ -140,24 +140,32 @@ class cubeSile(Sile):
             )
 
     @sile_fh_open()
-    def write_grid(self, grid, fmt=".5e", imag=False, unit="Bohr", *args, **kwargs):
+    def write_grid(
+        self,
+        grid: Grid,
+        fmt: str = ".5e",
+        imag: bool = False,
+        unit: str = "Bohr",
+        *args,
+        **kwargs,
+    ):
         """Write `Grid` to the contained file
 
         Parameters
         ----------
-        grid : Grid
+        grid :
            the grid to be written in the CUBE file
-        fmt : str, optional
+        fmt :
            format used for precision output
-        imag : bool, optional
+        imag :
            write only imaginary part of the grid, default to only writing the
            real part.
-        buffersize : int, optional
-           size of the buffer while writing the data, (6144)
-        unit: str, optional
+        unit:
             what length unit should the cube file data be written in.
             The grid data is assumed to be unit-less, this unit only refers
             to the lattice vectors and atomic coordinates.
+        buffersize : int, optional
+           size of the buffer while writing the data, (6144)
         """
         # Check that we can write to the file
         sile_raise_write(self)
@@ -219,19 +227,30 @@ class cubeSile(Sile):
         header["unit"] = unit_convert(header.get("unit", "Bohr"), "Ang")
         return header
 
+    def read_basis(self) -> Atoms:
+        """Reads the `Atoms` object from the CUBE file"""
+        return self.read_geometry().atoms
+
     @sile_fh_open()
-    def read_lattice(self, na=False):
+    def read_lattice(self, ret_na: bool = False) -> Lattice:
         """Returns `Lattice` object from the CUBE file
 
         Parameters
         ----------
-        na : bool, optional
+        ret_na : bool, optional
            whether to also return the number of atoms in the geometry
+
+        Returns
+        -------
+        lattice: Lattice
+            the lattice object
+        na : int
+            number of atoms (only if `ret_na`)
         """
         unit2Ang = self._r_header_dict()["unit"]
 
         origin = self.readline().split()  # origin
-        lna = int(origin[0])
+        na = int(origin[0])
         origin = np.fromiter(map(float, origin[1:]), np.float64)
 
         cell = np.empty([3, 3], np.float64)
@@ -244,15 +263,15 @@ class cubeSile(Sile):
 
         cell = cell * unit2Ang
         origin = origin * unit2Ang
-        if na:
-            return lna, Lattice(cell, origin=origin)
+        if ret_na:
+            return Lattice(cell, origin=origin), na
         return Lattice(cell, origin=origin)
 
     @sile_fh_open()
-    def read_geometry(self):
+    def read_geometry(self) -> Geometry:
         """Returns `Geometry` object from the CUBE file"""
         unit2Ang = self._r_header_dict()["unit"]
-        na, lattice = self.read_lattice(na=True)
+        lattice, na = self.read_lattice(ret_na=True)
 
         if na == 0:
             return None
@@ -270,7 +289,7 @@ class cubeSile(Sile):
         return Geometry(xyz * unit2Ang, atom, lattice=lattice)
 
     @sile_fh_open()
-    def read_grid(self, imag=None):
+    def read_grid(self, imag=None) -> Grid:
         """Returns `Grid` object from the CUBE file
 
         Parameters

@@ -1,6 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import numpy as np
 
 from sisl._internal import set_module
@@ -79,6 +81,8 @@ class Spin:
             "unpolarized": Spin.UNPOLARIZED,
             "": Spin.UNPOLARIZED,
             Spin.UNPOLARIZED: Spin.UNPOLARIZED,
+            "colinear": Spin.POLARIZED,
+            "collinear": Spin.POLARIZED,
             "polarized": Spin.POLARIZED,
             "p": Spin.POLARIZED,
             "pol": Spin.POLARIZED,

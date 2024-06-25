@@ -1,14 +1,17 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from numbers import Integral
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 
 from sisl import Atom, Geometry, geom
 from sisl._internal import set_module
+from sisl.typing import AtomsLike
 
 from ._common import geometry_define_nsc
 from ._composite import CompositeGeometrySection, composite_geometry
@@ -28,7 +31,7 @@ __all__ = [
 def nanoribbon(
     width: int,
     bond: float,
-    atoms,
+    atoms: AtomsLike,
     kind: str = "armchair",
     vacuum: float = 20.0,
     chirality: Tuple[int, int] = (3, 1),
@@ -43,7 +46,7 @@ def nanoribbon(
        number of atoms in the transverse direction
     bond :
        bond length between atoms in the honeycomb lattice
-    atoms : Atom
+    atoms :
        atom (or atoms) in the honeycomb lattice
     kind : {'armchair', 'zigzag', 'chiral'}
        type of ribbon
@@ -136,7 +139,7 @@ def nanoribbon(
 def graphene_nanoribbon(
     width: int,
     bond: float = 1.42,
-    atoms=None,
+    atoms: Optional[AtomsLike] = None,
     kind: str = "armchair",
     vacuum: float = 20.0,
     chirality: Tuple[int, int] = (3, 1),
@@ -149,7 +152,7 @@ def graphene_nanoribbon(
        number of atoms in the transverse direction
     bond :
        C-C bond length
-    atoms : Atom, optional
+    atoms :
        atom (or atoms) in the honeycomb lattice. Defaults to ``Atom(6)``
     kind : {'armchair', 'zigzag', 'chiral'}
        type of ribbon
@@ -173,7 +176,12 @@ def graphene_nanoribbon(
 
 
 @set_module("sisl.geom")
-def agnr(width: int, bond: float = 1.42, atoms=None, vacuum: float = 20.0) -> Geometry:
+def agnr(
+    width: int,
+    bond: float = 1.42,
+    atoms: Optional[AtomsLike] = None,
+    vacuum: float = 20.0,
+) -> Geometry:
     r"""Construction of an armchair graphene nanoribbon
 
     Parameters
@@ -200,7 +208,12 @@ def agnr(width: int, bond: float = 1.42, atoms=None, vacuum: float = 20.0) -> Ge
 
 
 @set_module("sisl.geom")
-def zgnr(width: int, bond: float = 1.42, atoms=None, vacuum: float = 20.0) -> Geometry:
+def zgnr(
+    width: int,
+    bond: float = 1.42,
+    atoms: Optional[AtomsLike] = None,
+    vacuum: float = 20.0,
+) -> Geometry:
     r"""Construction of a zigzag graphene nanoribbon
 
     Parameters
@@ -232,7 +245,7 @@ def cgnr(
     width: int,
     chirality: Tuple[int, int],
     bond: float = 1.42,
-    atoms=None,
+    atoms: Optional[AtomsLike] = None,
     vacuum: float = 20.0,
 ) -> Geometry:
     r"""Construction of an (n, m, w)-chiral graphene nanoribbon
@@ -266,7 +279,7 @@ def cgnr(
 
 @set_module("sisl.geom")
 @dataclass
-class _heteroribbon_section(CompositeGeometrySection):
+class heteroribbon_section(CompositeGeometrySection):
     """
     Parameters
     ----------
@@ -297,18 +310,18 @@ class _heteroribbon_section(CompositeGeometrySection):
     vacuum :
         minimum separation in transverse direction
     shift_quantum: bool, optional
-        Whether the implementation will assist avoiding lone atoms (< 2 neighbours).
+        Whether the implementation will assist avoiding lone atoms (< 2 neighbors).
 
         If ``False``, sections are just shifted (`shift`) number of atoms.
 
         If ``True``, shifts are quantized in the sense that shifts that produce
-        lone atoms (< 2 neighbours) are ignored. Then:
+        lone atoms (< 2 neighbors) are ignored. Then:
             - ``shift = 0`` means aligned.
             - ``shift = -1`` means first possible downwards shift (if available).
             - ``shift = 1`` means first possible upwards shift (if available).
         If this is set to `True`, `on_lone_atom` is overwritten to `"raise"`.
     on_lone_atom: {'ignore', 'warn', 'raise'}
-        What to do when a junction between sections produces lone atoms (< 2 neighbours)
+        What to do when a junction between sections produces lone atoms (< 2 neighbors)
 
         Messages contain hopefully useful explanations to understand what
         to do to fix it.
@@ -321,7 +334,7 @@ class _heteroribbon_section(CompositeGeometrySection):
     L: int = 1
     shift: int = 0
     align: str = "bottom"
-    atoms: Atom = None
+    atoms: AtomsLike = None
     bond: float = None
     kind: str = "armchair"
     vacuum: float = 20.0
@@ -433,7 +446,7 @@ class _heteroribbon_section(CompositeGeometrySection):
         align, offset = self._align_offset(prev, new_section)
 
         if prev is not None:
-            if not isinstance(prev, _heteroribbon_section):
+            if not isinstance(prev, heteroribbon_section):
                 self._junction_error(
                     prev,
                     f"{self.__class__.__name__} can not be appended to {type(prev).__name__}",
@@ -734,7 +747,7 @@ class _heteroribbon_section(CompositeGeometrySection):
 
 
 @set_module("sisl.geom")
-def heteroribbon(sections, section_cls=_heteroribbon_section, **kwargs) -> Geometry:
+def heteroribbon(sections, section_cls=heteroribbon_section, **kwargs) -> Geometry:
     """Build a nanoribbon consisting of several nanoribbons of different widths.
 
     This function uses `composite_geometry`, but defaulting to the usage
@@ -767,22 +780,22 @@ def heteroribbon(sections, section_cls=_heteroribbon_section, **kwargs) -> Geome
     See also
     --------
     composite_geometry: Underlying method used to build the heteroribbon.
-    _heteroribbon_section: The class that describes each section.
+    heteroribbon_section: The class that describes each section.
     nanoribbon : method used to create the segments
     graphene_heteroribbon: same as this function, but with defaults for graphene GNR's
     """
     return composite_geometry(sections, section_cls=section_cls, **kwargs)
 
 
-heteroribbon.section = _heteroribbon_section
+heteroribbon.section = heteroribbon_section
 
 
 @set_module("sisl.geom")
 def graphene_heteroribbon(
     sections,
-    section_cls=_heteroribbon_section,
+    section_cls=heteroribbon_section,
     bond: float = 1.42,
-    atoms=None,
+    atoms: Optional[AtomsLike] = None,
     **kwargs,
 ) -> Geometry:
     """Build a graphene nanoribbon consisting of several nanoribbons of different widths
@@ -801,4 +814,4 @@ def graphene_heteroribbon(
     )
 
 
-graphene_heteroribbon.section = _heteroribbon_section
+graphene_heteroribbon.section = heteroribbon_section

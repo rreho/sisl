@@ -1,19 +1,25 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 import ast
 import functools
 import importlib
 import inspect
 import operator as op
+import re
 import sys
+from collections.abc import Callable, Iterable, Iterator
 from math import pi
 from numbers import Integral
+from typing import Any, Union
 
-__all__ = ["merge_instances", "str_spec", "direction", "angle"]
+__all__ = ["merge_instances", "str_spec", "direction", "listify", "angle"]
 __all__ += ["iter_shape", "math_eval", "allow_kwargs"]
 __all__ += ["import_attr", "lazy_import"]
 __all__ += ["PropertyDict", "NotNonePropertyDict"]
+__all__ += ["size_to_num", "size_to_elements"]
 
 
 # supported operators
@@ -79,6 +85,68 @@ def merge_instances(*args, **kwargs):
     for arg in args:
         m.__dict__.update(arg.__dict__)
     return m
+
+
+def size_to_num(size: Union[int, float, str], unit: str = "MB") -> float:
+    """Convert a size-specification to a size in a specific `unit`
+
+    Converts the input value (`size`) into a number corresponding to
+    the `size` converted to the specified `unit`.
+
+    If `size` is passed as an integer (or float), it will be interpreted
+    as a size in MB. Otherwise the string may contain the size specification.
+    """
+    if isinstance(size, (float, int)):
+        return size
+
+    # Now parse the size from a string
+    match = re.match(r"(\d+[.\d]*)(\D*)", size)
+    size = float(match[1].strip())
+    unit_in = match[2].strip()
+
+    # Now parse things
+    # We expect data to be in MB (default unit)
+    # Then we can always convert
+    conv = {
+        "b": 1 / (1024 * 1024),
+        "B": 1 / (1024 * 1024),
+        "k": 1 / 1024,
+        "kb": 1 / 1024,
+        "kB": 1 / 1024,
+        "mb": 1,
+        "M": 1,
+        "MB": 1,
+        "G": 1024,
+        "GB": 1024,
+        "T": 1024 * 1024,
+        "TB": 1024 * 1024,
+    }
+
+    if unit_in:
+        unit_in = conv[unit_in]
+    else:
+        unit_in = 1
+
+    # Convert the requested unit
+    unit = conv[unit]
+
+    return size * unit_in / unit
+
+
+def size_to_elements(size: Union[int, str], byte_per_elem: int = 8) -> int:
+    """Calculate the number of elements such that they occupy `size` memory
+
+    Parameters
+    ----------
+    size :
+        a size specification, either by an integer, or a str. If an integer it is
+        assumed to be in MB, otherwise the str can hold a unit specification.
+    byte_per_elem
+        number of bytes per element when doing the conversion
+    """
+    size = size_to_num(size, unit="B")
+
+    return int(size // byte_per_elem)
 
 
 def iter_shape(shape):
@@ -153,9 +221,73 @@ def str_spec(name):
     return "{".join(lname[:-1]), lname[-1]
 
 
+IterableAny = Iterator[Any]
+IterableInstantiation = Callable[..., IterableAny]
+
+
+class Listify:
+    """Convert arguments to an iterable-like (any iterable, default to `list`)
+
+    It provides also an easy mechanism for "piping" content to
+    a function call (for better readability).
+
+    Parameters
+    ----------
+    cls:
+        the default list-like object to cast it to
+
+    Examples
+    --------
+    >>> listify = Listify()
+    >>> 1 | listify
+    [1]
+    >>> Listify(tuple)(1)
+    (1,)
+
+    It can greatly improve readability with `map` constructs:
+    >>> map(lambda x, [1]) | listify
+    [1]
+
+    Notes
+    -----
+    If using this to convert to `tuple` instances ``Listify(tuple)``,
+    please do note the problems of using a tuple as indices for
+    `numpy.ndarray` objects.
+
+    This is partly inspired by `pip <https://pypi.org/project/pipe/>`_.
+    """
+
+    __slots__ = ("_cls",)
+
+    # Ensures that numpy function calls won't happen!
+    # Just a higher priority than *any* numpy arrays and subclasses.
+    __array_priority__ = 1000000
+
+    def __init__(self, cls: IterableInstantiation = list):
+        self._cls = cls
+
+    def __call__(
+        self, arg: Any, cls: Optional[IterableInstantiation] = None
+    ) -> IterableAny:
+        if cls is None:
+            cls = self._cls
+        if isinstance(arg, Iterable):
+            if isinstance(arg, cls):
+                return arg
+            return cls(arg)
+        return cls([arg])
+
+    def __ror__(self, arg: Any) -> IterableAny:
+        """Allow piping of function calls (on the right side)"""
+        return self(arg)
+
+
+listify = Listify()
+
+
 # Transform a string to a Cartesian direction
 def direction(d, abc=None, xyz=None):
-    """Index coordinate corresponding to the Cartesian coordinate system.
+    """Index coordinate transformation from int/str to an integer
 
     Parameters
     ----------
@@ -410,6 +542,10 @@ def lazy_import(name, package=None):
     util.LazyLoader(spec.loader).exec_module(module)
 
     return module
+
+
+# This class is very much like the addict type
+# However, a much reduced usage
 
 
 class PropertyDict(dict):

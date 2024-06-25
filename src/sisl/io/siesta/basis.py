@@ -1,11 +1,13 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
+from __future__ import annotations
+
 from sisl._array import aranged, arrayd
+from sisl._core.atom import Atom
+from sisl._core.orbital import SphericalOrbital
 from sisl._help import xml_parse
 from sisl._internal import set_module
-from sisl.atom import Atom
-from sisl.orbital import SphericalOrbital
 from sisl.unit.siesta import unit_convert
 from sisl.utils import PropertyDict, strmap
 from sisl.utils.cmd import default_ArgumentParser, default_namespace
@@ -24,7 +26,7 @@ class ionxmlSileSiesta(SileSiesta):
     """
 
     @sile_fh_open(True)
-    def read_basis(self):
+    def read_basis(self) -> Atom:
         """Returns data associated with the ion.xml file"""
         # Get the element-tree
         root = xml_parse(self.fh).getroot()
@@ -90,7 +92,7 @@ class ionncSileSiesta(SileCDFSiesta):
     Note that the ``ion.nc`` files are equivalent to the ``ion.xml`` files.
     """
 
-    def read_basis(self):
+    def read_basis(self) -> Atom:
         """Returns data associated with the ion.xml file"""
         no = len(self._dimension("norbs"))
 
