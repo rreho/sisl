@@ -135,16 +135,21 @@ class pdosSileSiesta(SileSiesta):
         elif nspin == 8:
             
             def process(D):
-                tmp = np.empty(D.shape[0], D.dtype)
-                D[:,3] = D[:,0] - D[:,1]
-                D[:,0] = D[:,0] + D[:,1]
-                D[:,1] = D[:,2]
-                D[:,2] = tmp[:]
-                tmp[:] = D[:,7]
-                D[:,7] = D[:,4] - D[:,5]
-                D[:,4] = D[:,4] + D[:,5]
-                D[:,5] = D[:,6]
-                D[:,6] = tmp[:]
+                # Data coming from siesta are rearranged in different order
+                # we start from 'e_up e_down e_x e_y h_up h_down h_x h_y' and go to 'tot_e e_x, e_y, e_z, tot_h, h_x, h_y, h_z'
+                # Note that for chi this is wrong and needs to be adjusted with internal routines
+                tmp1 = np.empty(D.shape[0], D.dtype)
+                tmp2 = np.empty(D.shape[0], D.dtype)
+                tmp1 = D[:,3]
+                D[:,3] = D[:,0] - D[:,1] # e_up - e_down
+                D[:,0] = D[:,0] + D[:,1] # e_up + e_down
+                D[:,1] = D[:,2] # e_x
+                D[:,2] = tmp1[:] # e_y
+                tmp2[:] = D[:,7]
+                D[:,7] = D[:,4] - D[:,5] # h_up - h_down
+                D[:,4] = D[:,4] + D[:,5] # h_up + h_down
+                D[:,5] = D[:,6] # h_x
+                D[:,6] = tmp2[:] # h_y
                 return D               
  
         else:
