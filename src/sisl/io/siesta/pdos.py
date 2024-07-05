@@ -137,6 +137,7 @@ class pdosSileSiesta(SileSiesta):
             def process(D):
                 # Data coming from siesta are rearranged in different order
                 # we start from 'e_up e_down e_x e_y h_up h_down h_x h_y' and go to 'tot_e e_x, e_y, e_z, tot_h, h_x, h_y, h_z'
+                # for anomalous 'heS heT_z heT_x heT_y, ehS ehT_z ehT_x ehT_y'
                 # Note that for chi this is wrong and needs to be adjusted with internal routines
                 tmp1 = np.empty(D.shape[0], D.dtype)
                 tmp2 = np.empty(D.shape[0], D.dtype)
