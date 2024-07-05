@@ -167,6 +167,8 @@ class pdosSileSiesta(SileSiesta):
                 spin = ["sum", "z"]
             elif nspin == 4:
                 spin = ["sum", "x", "y", "z"]
+            elif nspin == 8 :
+                spin = ["sum_e", "x_e", "y_e", "z_e", "sum_h", "x_h", "y_h", "z_h"]        
 
             # Dimensions of the PDOS data-array
             dims = ["E", "spin", "n", "l", "m", "zeta", "polarization"]
