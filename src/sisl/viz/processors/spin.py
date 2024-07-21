@@ -19,6 +19,7 @@ _options = {
         {"label": val, "value": val} for val in ("total", "x", "y", "z")
     ],
     Spin.SPINORBIT: [{"label": val, "value": val} for val in ("total", "x", "y", "z")],
+    Spin.NAMBU: [{"label": val, "value": val} for val in ("total_e", "x_e", "y_e", "z_e", "total_h", "x_h", "y_h", "z_h")],    
 }
 
 

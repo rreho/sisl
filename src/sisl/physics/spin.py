@@ -48,7 +48,8 @@ class Spin:
     NONCOLINEAR = 2
     #: Constant for a spin-orbit spin configuration
     SPINORBIT = 3
-
+    #: Constant for a BdG calculation
+    NAMBU = 4
     #: The :math:`\boldsymbol\sigma_x` Pauli matrix
     X = np.array([[0, 1], [1, 0]], np.complex128)
     #: The :math:`\boldsymbol\sigma_y` Pauli matrix
@@ -97,6 +98,9 @@ class Spin:
             "so": Spin.SPINORBIT,
             "soc": Spin.SPINORBIT,
             Spin.SPINORBIT: Spin.SPINORBIT,
+            "Nambu" : Spin.NAMBU,
+            'nambu' : Spin.NAMBU,
+            Spin.NAMBU : Spin.NAMBU,            
         }.get(kind)
         if kind is None:
             raise ValueError(
@@ -113,6 +117,7 @@ class Spin:
                 self.POLARIZED: 2,
                 self.NONCOLINEAR: 4,
                 self.SPINORBIT: 4,
+                self.NAMBU: 8,                
             }.get(kind)
 
         else:
@@ -121,6 +126,7 @@ class Spin:
                 self.POLARIZED: 2,
                 self.NONCOLINEAR: 4,
                 self.SPINORBIT: 8,
+                self.NAMBU: 8,                
             }.get(kind)
 
         self._size = size
